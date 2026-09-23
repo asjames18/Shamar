@@ -1,6 +1,6 @@
 # Contributors
 
-People and agents who build and maintain Shamar.
+People who build and maintain Shamar.
 
 ## Maintainers
 

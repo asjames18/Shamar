@@ -2,6 +2,13 @@
 
 Concise record of each work cycle: timestamp, task, changes, tests, risks, next task.
 
+## 2026-09-23 ~15:20 EDT - Docs: Justin Carter contribution credit commit
+
+**Task:** Land a small docs contribution under Justin Carter's GitHub identity so the Contributors graph includes @justincarterdev.
+
+**Changes:** CONTRIBUTORS.md intro wording ("People who build and maintain Shamar."); this log note.
+
+**Next:** Merge when Antonio clears.
 ## 2026-09-23 ~15:12 EDT — Docs: Justin Carter contributor credit
 
 **Task:** Credit Justin Carter (@justincarterdev) as a normal contributor in public docs.
