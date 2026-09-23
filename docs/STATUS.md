@@ -1,8 +1,10 @@
 # STATUS — Shamar (living snapshot)
 
-_Last updated: 2026-09-23 ~17:15 EDT. Update this file whenever the state below changes — it's the first thing every agent reads._
+_Last updated: 2026-09-23 ~17:30 EDT. Update this file whenever the state below changes — it's the first thing every agent reads._
 
 ## Right now
+
+**Week of development (2026-09-23 → ~2026-09-30)** — Antonio's decision: keep building for about a week before deciding whether to promote publicly and invite outside contributors. The loop is working the MVP targets in order (Phase 2 real-daemon run skipped for now — needs his machine; starting Phase 3 cloud adapters). Launch post + all promotion HELD until the decision.
 
 **Demo-polish pass COMPLETE (2026-09-23 ~17:15)** — the public demo (`shamar-site`) now runs a simulated live event stream (sample event every 12–20s, no backend), a 6-agent fleet with an error state, page-load-anchored timestamps, and visual polish. Landing "Ollama ready" wording corrected to "zero-cost path". **Deployed to the preview worker 2026-09-23 ~16:55** — waiting on Antonio's verdict on the demo's attractiveness (launch post stays HELD).
 
