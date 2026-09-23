@@ -60,6 +60,7 @@ interface ApiJson {
   total_agents?: number;
   agents_by_status?: Record<string, number>;
   events_last_24h?: number;
+  status?: string;
   recent_events?: Array<{ type: string; summary: string; occurred_at: string; tokens_in: number | null; tokens_out: number | null; duration_ms: number | null; cost_usd: number | null }>;
   last_check_in?: string | null;
   usage?: AgentUsage;
@@ -379,12 +380,14 @@ test('ollama: invoke rejects bad input before touching the model', async () => {
   assert.equal(unknownProvider.status, 404);
 });
 
-test('providers: unimplemented kinds return honest 501', async () => {
-  const { status, json } = await api('POST', '/api/providers', { kind: 'openai', name: 'OpenAI BYOK' });
+test('providers: all kinds implemented — validate returns an honest result, never 501', async () => {
+  const { status, json } = await api('POST', '/api/providers', { kind: 'gemini', name: 'Gemini BYOK' });
   assert.equal(status, 201);
   const id = req(json.provider, 'provider').id;
   const validate = await api('POST', `/api/providers/${id}/validate`);
-  assert.equal(validate.status, 501);
-  const models = await api('GET', `/api/providers/${id}/models`);
-  assert.equal(models.status, 501);
+  assert.notEqual(validate.status, 501);
+  // No key configured -> honest failure (ok:false), never a faked check.
+  assert.equal(validate.status, 200);
+  assert.equal(validate.json.ok, false);
+  assert.equal(validate.json.status, 'unhealthy');
 });

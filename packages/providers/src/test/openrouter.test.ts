@@ -89,11 +89,10 @@ after(() => new Promise<void>((resolve) => mock.close(() => resolve())));
 // the server's per-request construction) — reset between tests.
 beforeEach(() => resetPricingCache());
 
-test('createProviderAdapter wires openrouter and keeps honest 501s for the rest', () => {
+test('createProviderAdapter wires openrouter — all kinds implemented', () => {
   const adapter = createProviderAdapter('openrouter');
   assert.equal(adapter.kind, 'openrouter');
-  assert.throws(() => createProviderAdapter('openai'), /not implemented yet/);
-  assert.throws(() => createProviderAdapter('anthropic'), /not implemented yet/);
+  assert.equal(createProviderAdapter('gemini').kind, 'gemini');
 });
 
 test('listModels returns models and carries context windows', async () => {

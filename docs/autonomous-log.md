@@ -295,3 +295,111 @@ Scope: packages/providers — OpenRouterAdapter (validateCredentials via documen
 **Committed:** `24dc7ad` `feat(providers): add OpenRouter BYOK adapter (Phase 3, first cloud adapter)` — local only (Mosheh syncs to GitHub).
 
 **Next:** next cloud adapter one at a time (OpenAI / Anthropic / Gemini BYOK) — or live OpenRouter key check if Antonio supplies a key.
+
+## 2026-09-23 ~18:20 EDT — IN PROGRESS: Phase 3, cycle 2: Anthropic BYOK adapter (agent: antonio/loop)
+
+Scope: packages/providers — AnthropicAdapter (validateCredentials via documented GET /v1/models (200 = valid key, 401 = bad key — doubles as model discovery), invokeModel via documented POST /v1/messages with real usage (input_tokens/output_tokens), estimateCost always null since Anthropic's API exposes no pricing (never guessed — ADR-0003), key from ANTHROPIC_API_KEY env), wiring in createProviderAdapter, unit tests against a mock HTTP server. No live key needed.
+
+## 2026-09-23 ~18:35 EDT — Phase 3, cycle 2: Anthropic BYOK adapter (agent: antonio/loop)
+
+**Task selected:** P2 MVP blocker — Phase 3 next cloud adapter, one at a time (OpenRouter done previous cycle). Demo-polish is staged awaiting Antonio's verdict (launch post HELD); Phase 2 real-daemon needs his machine — Anthropic was the next actionable item per the directive.
+
+**Changes:**
+- `packages/providers/src/anthropic.ts` (new) — `AnthropicAdapter` implementing `ProviderAdapter`, documented Anthropic API only:
+  - `validateCredentials()` → documented `GET /v1/models` — 200 = valid key, 401/403 = bad key; makes no model call (costs nothing); doubles as model discovery.
+  - `listModels()` → `/v1/models`, id + display_name; requires key per the documented API.
+  - `invokeModel()` → documented `POST /v1/messages` (`anthropic-version: 2023-06-01`, `x-api-key` headers, required max_tokens, default 1024); real usage from `usage.input_tokens`/`usage.output_tokens`; text joined from text content blocks. Prompt/response bodies never stored (server-side, unchanged).
+  - `estimateCost()` — always returns null: the Anthropic API exposes no pricing endpoint, so there is no documented source to compute from (never guessed — ADR-0003). Token usage is still recorded exactly; cost_usd stays null honestly.
+  - Key from constructor or `ANTHROPIC_API_KEY` env — never logged, stored, or echoed; only in the `x-api-key` header.
+- `packages/providers/src/index.ts` — `createProviderAdapter('anthropic')` wired; `openai`/`gemini` still honest 501s.
+- `packages/providers/src/test/anthropic.test.ts` (new) — 7 tests against a mock Anthropic HTTP server: factory wiring + honest 501s for the rest, listModels, validate ok/rejected/missing-key, invoke usage capture + estimateCost always null, key-required rejection. Mock asserts the key is only ever sent as the `x-api-key` header.
+- `packages/providers/src/test/openrouter.test.ts` — updated the "honest 501s" assertion (anthropic now implemented; openai/gemini still throw).
+- Server unchanged — existing `/api/providers/:id/{models,validate,invoke}` endpoints just work.
+- Docs: `ROADMAP.md` (Phase 3 — Anthropic checked off), `docs/STATUS.md` (Next queue, health 58/58).
+
+**Tests/verification:**
+- `npm run lint` ✅ zero warnings · `npm run typecheck` ✅ · `npm test` ✅ **58/58 pass** (51 existing + 7 new) · `npm run build` ✅.
+- E2E against live API + mock Anthropic (localhost): register anthropic provider → `POST /validate` → `{ok:true, message:"Anthropic API key valid", status:"healthy"}` ✅ → `GET /models` ✅ → `POST /invoke` → text + real usage `{tokens_in:50, tokens_out:25}` + `model.called` event with `cost_usd=null` (honest, no pricing source) ✅. Scratch DB + scripts deleted.
+
+**Security self-review:** no secrets touched — tests use a fake key; key only ever placed in the `x-api-key` header; validation never echoes key material; provider error messages come from Anthropic's own JSON, not our key. No new attack surface (same three endpoints, now real).
+
+**Risks / open items:**
+- Not yet run against a real Anthropic key — needs Antonio's BYOK key (he sets `ANTHROPIC_API_KEY` in `.env`, never committed). Also verifies the real `/v1/models` shape against the documented contract.
+- cost_usd for Anthropic-backed events is always null (null-cost rule) — dashboard shows usage counts without cost estimates. Fine for MVP; reversible if Anthropic ever ships a pricing endpoint.
+
+**Committed:** `308fae9` `feat(providers): add Anthropic BYOK adapter (Phase 3, second cloud adapter)` — local only (Mosheh syncs to GitHub).
+
+**Next:** next cloud adapter (OpenAI / Gemini BYOK) one at a time — or live Anthropic key check if Antonio supplies a key.
+
+## 2026-09-23 ~18:45 EDT — IN PROGRESS: Phase 3, cycle 3: OpenAI BYOK adapter (agent: antonio/loop)
+
+Scope: packages/providers — OpenAIAdapter (validateCredentials via documented GET /v1/models (200 = valid key, 401 = bad key — doubles as model discovery; costs nothing), listModels via /v1/models, invokeModel via documented POST /v1/chat/completions with real usage (prompt_tokens/completion_tokens), estimateCost always null since the OpenAI API exposes no pricing endpoint (never guessed — ADR-0003), key from OPENAI_API_KEY env, Bearer header only), wiring in createProviderAdapter (gemini still honest 501), unit tests against a mock HTTP server, honest-501 assertion updates in openrouter/anthropic tests. No live key needed.
+
+## 2026-09-23 ~19:00 EDT — Phase 3, cycle 3: OpenAI BYOK adapter (agent: antonio/loop)
+
+**Task selected:** P2 MVP blocker — Phase 3 next cloud adapter, one at a time (OpenRouter + Anthropic done previous cycles). Demo-polish is staged awaiting Antonio's verdict (launch post HELD); Phase 2 real-daemon needs his machine — OpenAI was the next actionable item per the directive.
+
+**Changes:**
+- `packages/providers/src/openai.ts` (new) — `OpenAIAdapter` implementing `ProviderAdapter`, documented OpenAI API only:
+  - `validateCredentials()` → documented `GET /v1/models` — 200 = valid key, 401/403 = bad key; makes no model call (costs nothing); doubles as model discovery.
+  - `listModels()` → `/v1/models`, id + owned_by in the name; requires key per the documented API.
+  - `invokeModel()` → documented `POST /v1/chat/completions` (`Authorization: Bearer` header, explicit `max_completion_tokens`, default 1024); real usage from `usage.prompt_tokens`/`usage.completion_tokens`; text joined from choices' message content. Prompt/response bodies never stored (server-side, unchanged).
+  - `estimateCost()` — always returns null: the OpenAI API exposes no pricing endpoint, so there is no documented source to compute cost from (never guessed — ADR-0003). Token usage is still recorded exactly; cost_usd stays null honestly.
+  - Key from constructor or `OPENAI_API_KEY` env — never logged, stored, or echoed; only in the `Authorization: Bearer` header.
+- `packages/providers/src/index.ts` — `createProviderAdapter('openai')` wired; exports `OpenAIAdapter`/`DEFAULT_OPENAI_BASE_URL`; only `gemini` still throws the honest 501.
+- `packages/providers/src/test/openai.test.ts` (new) — 7 tests against a mock OpenAI HTTP server: factory wiring + honest 501 for gemini, listModels, validate ok/rejected/missing-key, invoke usage capture + estimateCost always null, key-required rejection. Mock asserts the key is only ever sent as the Bearer header.
+- `packages/providers/src/test/openrouter.test.ts`, `anthropic.test.ts` — honest-501 assertions updated (openai now implemented; gemini the only remaining 501).
+- `apps/api/src/test/api.test.ts` — the "unimplemented kinds return honest 501" test now targets `gemini` instead of `openai`.
+- Server unchanged — existing `/api/providers/:id/{models,validate,invoke}` endpoints just work.
+- Docs: `ROADMAP.md` (Phase 3 — OpenAI checked off, gemini last one standing), `docs/STATUS.md` (Next queue, health 65/65).
+
+**Tests/verification:**
+- `npm run lint` ✅ zero warnings · `npm run typecheck` ✅ · `npm test` ✅ **65/65 pass** (58 existing + 7 new) · `npm run build` ✅.
+- E2E against live API + mock OpenAI (localhost): register openai provider → `POST /validate` → `{ok:true, message:"OpenAI API key valid", status:"healthy"}` ✅ → `GET /models` → gpt-e2e-1,gpt-e2e-2 ✅ → `POST /invoke` (with agent_id) → text + real usage `{tokens_in:50, tokens_out:25}` + `model.called` event with `cost_usd=null` (honest, no pricing source) ✅. Scratch DB + scripts deleted.
+- Note: `apps/api/dist/server.js` exports `startServer` — nothing auto-starts; E2E started it via a tiny import script (same shape as the test harness).
+
+**Security self-review:** no secrets touched — tests use a fake key; key only ever placed in the `Authorization: Bearer` header; validation never echoes key material; provider error messages come from OpenAI's own JSON, not our key. No new attack surface (same three endpoints, now real).
+
+**Risks / open items:**
+- Not yet run against a real OpenAI key — needs Antonio's BYOK key (he sets `OPENAI_API_KEY` in `.env`, never committed). Also verifies the real `/v1/models` shape against the documented contract.
+- cost_usd for OpenAI-backed events is always null (null-cost rule) — dashboard shows usage counts without cost estimates. Fine for MVP; reversible if OpenAI ever ships a pricing endpoint.
+
+**Committed:** `feat(providers): add OpenAI BYOK adapter (Phase 3, third cloud adapter)` — local only (Mosheh syncs to GitHub).
+
+**Next:** Gemini BYOK adapter (last cloud adapter) — or live OpenAI key check if Antonio supplies a key.
+
+## 2026-09-23 ~19:15 EDT — IN PROGRESS: Phase 3, cycle 4: Gemini BYOK adapter (agent: antonio/loop)
+
+Scope: packages/providers — GeminiAdapter (validateCredentials + listModels via documented GET /v1beta/models?key=, invokeModel via documented POST /v1beta/models/{model}:generateContent?key=, usageMetadata token counts, estimateCost always null (no pricing endpoint — ADR-0003), key from GEMINI_API_KEY env or constructor, sent only as the documented `key` query param, never logged/stored), wiring in createProviderAdapter (no 501s left), unit tests against a mock HTTP server, removing/retiring the "honest 501" tests now that every kind is implemented. No live key needed.
+
+## 2026-09-23 ~19:35 EDT — Phase 3, cycle 4: Gemini BYOK adapter (agent: antonio/loop) — COMPLETE
+
+**Task selected:** P2 MVP blocker — Phase 3 last cloud adapter (OpenRouter + Anthropic + OpenAI done previous cycles; demo-polish staged awaiting Antonio's verdict; Phase 2 real-daemon needs his machine).
+
+**Changes:**
+- `packages/providers/src/gemini.ts` (new) — `GeminiAdapter` implementing `ProviderAdapter`, documented Gemini API only:
+  - `validateCredentials()` → documented `GET /v1beta/models?key=` — 200 = valid key, 400/403 = bad key; makes no model call (costs nothing); doubles as model discovery. Includes `latency_ms` on every health result, matching the other adapters.
+  - `listModels()` → `/v1beta/models`, filters to `supportedGenerationMethods` containing `generateContent` (embed models excluded); id strips the `models/` prefix, name pairs id with `displayName`.
+  - `invokeModel()` → documented `POST /v1beta/models/{model}:generateContent?key=`; system messages map to the documented `systemInstruction`, user/assistant → user/model roles; explicit `generationConfig.maxOutputTokens` (default 1024, overridable via `max_tokens`); real usage from `usageMetadata.promptTokenCount`/`candidatesTokenCount`. Prompt/response bodies never stored (server-side, unchanged).
+  - `estimateCost()` — always returns null: the Gemini API exposes no pricing endpoint, so there is no documented source to compute cost from (never guessed — ADR-0003).
+  - Key from constructor or `GEMINI_API_KEY` env — sent only as the documented `key` query param (never in headers, never logged/stored/echoed); mock tests assert this.
+- `packages/providers/src/index.ts` — `createProviderAdapter('gemini')` wired; exports `GeminiAdapter`/`DEFAULT_GEMINI_BASE_URL`. **Every provider kind is now implemented — no 501s left.**
+- `packages/providers/src/test/gemini.test.ts` (new) — 7 tests against a mock Gemini HTTP server: factory wiring (all 5 kinds), generateContent-only model filtering, validate ok/rejected/missing-key, invoke usage capture + systemInstruction handling + estimateCost always null, key-required/model-required/non-system-message rejections. Mock asserts the key is only ever sent as the `key` query param.
+- `packages/providers/src/test/{anthropic,openrouter,openai}.test.ts` — honest-501 assertions retired; all assert gemini is now wired.
+- `apps/api/src/test/api.test.ts` — "unimplemented kinds return honest 501" replaced with "all kinds implemented — validate returns an honest result, never 501" (register gemini with no key → 200 `{ok:false, status:'unhealthy'}`, no faked check); added `status?: string` to the `ApiJson` test type.
+- Server unchanged — existing `/api/providers/:id/{models,validate,invoke}` endpoints just work.
+- Docs: `ROADMAP.md` ("Where we are" box + Phase 3 Gemini checked off, Phase 3 marked COMPLETE), `docs/STATUS.md` (Right now + Next queue + health 72/72).
+
+**Tests/verification:**
+- `npm run lint` ✅ zero warnings · `npm run typecheck` ✅ · `npm test` ✅ **72/72 pass** (65 existing + 7 new) · `npm run build` ✅.
+- E2E against live API + mock Gemini (localhost): register gemini provider → `POST /validate` → `{ok:true, message:"Gemini API key valid", status:"healthy"}` ✅ → `GET /models` → gemini-e2e-1 ✅ → `POST /invoke` (with agent_id) → text + real usage `{tokens_in:50, tokens_out:25}` ✅ → agent detail timeline shows `model.called` with tokens 50/25 and `cost_usd=null` (honest, no pricing source) ✅. Scratch DB + scripts deleted.
+
+**Security self-review:** no secrets touched — tests use a fake key; key only ever placed in the documented `key` query param; validation never echoes key material; provider error messages come from Gemini's own JSON, not our key. No new attack surface (same three endpoints, now real).
+
+**Risks / open items:**
+- Not yet run against a real Gemini key — needs Antonio's BYOK key (he sets `GEMINI_API_KEY` in `.env`, never committed). Same for OpenRouter/Anthropic/OpenAI — all four pending live key checks.
+- cost_usd for Gemini-backed events is always null (null-cost rule) — dashboard shows usage counts without cost estimates. Fine for MVP; reversible if Google ever ships a pricing endpoint.
+
+**Committed:** `e18037e feat(providers): add Gemini BYOK adapter (Phase 3, fourth and final cloud adapter)` — local only (Mosheh syncs to GitHub).
+
+**Next:** Phase 3 exit criteria met — next loop should pick the next MVP target from the directive order (e.g., Docker Compose validation needs a Docker machine — blocked in sandbox; docs REST API for external agents already exists — consider Antonio's verdict on the demo, live key checks, or Phase 4 governance foundations).
