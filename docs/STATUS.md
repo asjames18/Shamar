@@ -1,21 +1,19 @@
 # STATUS — Shamar (living snapshot)
 
-_Last updated: 2026-09-23 ~15:35 EDT. Update this file whenever the state below changes — it's the first thing every agent reads._
+_Last updated: 2026-09-23 ~17:15 EDT. Update this file whenever the state below changes — it's the first thing every agent reads._
 
 ## Right now
 
-**Contributor-readiness sprint** (directive set by Antonio 2026-09-23): make the repo ready for outside contributors before resuming feature work.
+**Demo-polish pass COMPLETE (2026-09-23 ~17:15)** — the public demo (`shamar-site`) now runs a simulated live event stream (sample event every 12–20s, no backend), a 6-agent fleet with an error state, page-load-anchored timestamps, and visual polish. Landing "Ollama ready" wording corrected to "zero-cost path". **Deployed to the preview worker 2026-09-23 ~16:55** — waiting on Antonio's verdict on the demo's attractiveness (launch post stays HELD).
 
+## Recently done
+
+**Contributor-readiness sprint — ✅ COMPLETE 2026-09-23 ~16:35** (directive from Antonio): repo is ready for outside contributors.
 - ✅ Issue templates (bug report / feature request) + config
-- ✅ 6 good-first-issue drafts in `docs/good-first-issues/`
-- ✅ `AGENTS.md` (agent working manual) + `AGENT_START.md` (onboarding brief)
-- ✅ `CONTRIBUTING.md` expansion (prerequisites, install, test flow, branch/PR conventions, code style, definition of done)
-- ✅ README polish (30-second vision, live demo link, verified quickstart) — completed 2026-09-23 ~16:35; also fixed stale `apps/web` "Next.js" claim, `<repo-url>` placeholder, and `dev:api` "rebuild on change" wording
-- ✅ Verified every quickstart command by actually running it (2026-09-23: lint/typecheck/test-43/build green; example client + seed script E2E against live API incl. authenticated dashboard summary; `docker compose up` unverifiable here — no Docker in sandbox)
 
 ## Next (queued)
 
-1. **Demo polish pass** — "demo that sells": simulated live event stream, richer seed data (5–8 agents incl. an error state), timestamps anchored to page load, visual polish, fix premature "Ollama ready" wording on the landing page.
+1. **Demo polish pass — ✅ COMPLETE 2026-09-23 ~17:15** — "demo that sells": simulated live event stream (new sample event every 12–20s), 6-agent fleet incl. error state (Deploy Watchdog, 3 failures) + paused + idle, timestamps anchored to page load, visual polish (pulsing live badge, fresh-row fade-in, "Needs attention" card, attention banner on the error-agent detail), landing "Ollama ready" wording fixed → "zero-cost path". `shamar-site/worker.js` is now generated from `landing.html`/`demo.html` via `build-worker.js`. **Deployed to the preview worker 2026-09-23 ~16:55** — awaiting Antonio's verdict.
 2. **Launch post** — drafted (`docs/launch-post-draft.md`), **HELD until Antonio judges the demo attractive**. Nothing gets published before that.
 3. **Phase 2 close-out** — Ollama adapter built and verified against a mock daemon; needs one real-daemon run.
 

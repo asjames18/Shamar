@@ -215,3 +215,48 @@ Concise record of each work cycle: timestamp, task, changes, tests, risks, next 
 **Security self-review:** docs-only + one error-string fix; no secrets, no code-behavior change, no new attack surface. Verification `.env` is gitignored (confirmed absent from `git status`).
 
 **Sprint status: contributor-readiness checklist COMPLETE** — CONTRIBUTING.md ✅, README ✅, issue templates ✅, good-first-issue drafts ✅, AGENTS.md + AGENT_START.md ✅, STATUS.md ✅, quickstart commands verified ✅. Next (per directive order): resume P3 — Demo polish pass → launch post (held until Antonio judges demo attractive) → Phase 2 real-daemon close-out.
+
+## 2026-09-23 ~16:45 EDT — IN PROGRESS: demo-polish pass on public demo site (agent: antonio/loop)
+
+Scope: ~/workspace/shamar-site/demo.html + landing.html — simulated live event stream, richer seed (6 agents incl. error state), timestamps anchored to page load, visual polish, fix premature "Ollama ready" wording. No paid models, no backend, simulated-data disclosure stays. Redeploy waits for Antonio's verdict (launch post stays HELD).
+
+## 2026-09-23 ~17:15 EDT — Demo polish pass COMPLETE (agent: antonio/loop)
+
+**Task selected:** P2 demo-polish — "demo that sells" on the public demo site (`~/workspace/shamar-site/`), per Antonio's directive. All data stays disclosed as simulated.
+
+**Changes (`demo.html`):**
+- **Timestamps anchored to page load** (`const T0 = Date.now()`; `at(msAgo)`) — the fleet always looks fresh; no more fixed 2026-09-23 timestamps going stale.
+- **Richer seed: 6 agents, varied statuses** — Research Agent + Content Crafter + HR Onboarder (active), Deploy Watchdog (error — 3 task failures in its timeline), Inbox Triage (paused), Data Sync (idle). Each with full identity fields, usage rollups, and a 4–6 event activity timeline. Fleet feed seeded with 14 newest-first events.
+- **Simulated live event stream** — every 12–20s a weighted random sample event (task.completed/started, model.called, tool.called, heartbeat, occasional task.failed from the error-state agent) prepends to the fleet feed, the agent's timeline, and usage counters. No paid models, no backend — pure browser-side simulation.
+- **Visual polish** — pulsing "live simulation" badge in header, fade-in animation on fresh event rows, row hover, "Needs attention" summary card (replaces "Failed agents"), ⚠ attention banner on the error agent's detail page explaining what a real Shamar deployment would do (page owner, pin to top of dashboard), per-view stream status line.
+- **Disclosure** — header keeps "sample data, not a live backend"; new dashed footer note spells out that every agent/event/timestamp/metric is browser-generated sample data and the live stream is a scripted simulation.
+
+**Changes (`landing.html`):** "Local-first · Ollama ready" → **"Local-first · zero-cost path"** — the Ollama adapter exists but isn't demonstrated in the demo; the old wording overpromised.
+
+**Changes (`build-worker.js` — new):** the live worker embeds both pages as escaped JS strings, so hand-editing `worker.js` would silently go stale. New script regenerates `worker.js` from `landing.html` + `demo.html` (`node build-worker.js`).
+
+**Tests/verification:**
+- `node build-worker.js` + `node --check worker.js` ✅ (syntax valid, both changes present in the bundle).
+- Node smoke test of the demo's inline script (DOM stubs): 6 agents ✅, error state present ✅, every agent has detail + numeric usage rollups ✅, all 14 seed events parseable and within 24h of page load ✅, newest-first ✅, stream generator prepends to fleet feed + agent timeline ✅, error agent shows 3 failures ✅.
+- Simulated `fetch` against the worker module: `/` → 200 landing (with zero-cost pill), `/demo` → 200 demo (with live stream), `/nope` → 404 ✅.
+
+**Security self-review:** no secrets (nothing to leak — static site, no backend); no prompt/response bodies anywhere; provider names are label strings in sample data, not integrations; no new attack surface; disclosure is explicit so nobody mistakes simulation for a live system.
+
+**NOT deployed.** The worker is staged locally; redeploy of `shamar-site` waits for Antonio's verdict on whether the demo is attractive (launch post stays HELD per directive). This is the report-back trigger: **demo-polish pass is complete and the demo is ready for his verdict.**
+
+**Next (per directive):** launch post (held) → Phase 2 real-daemon close-out (needs Antonio's machine) → Phase 3 cloud provider adapters.
+
+## 2026-09-23 ~17:45 EDT — Verification cycle: no code change required (agent: antonio/loop)
+
+**Task selected:** P0/P1 sweep — repo health + demo worker-bundle sync check. Demo-polish pass is complete and staged awaiting Antonio's verdict (launch post stays HELD); nothing else on the MVP list is actionable without him (Phase 2 real-daemon needs his machine, Docker Compose needs Docker) — no new product features started per directive rules.
+
+**Investigated:**
+- `npm run lint` ✅ zero warnings · `npm run typecheck` ✅ · `npm test` ✅ 43/43 pass (2758ms) — all green, no code touched.
+- `~/workspace/shamar-site/`: regenerated `worker.js` via `node build-worker.js` — byte-identical to staged copy (IN-SYNC); generated bundle carries the polished demo (live stream, 6-agent fleet incl. error state, page-load timestamps, "zero-cost path" wording). `node --check` syntax ✅.
+- No Platform-agent claims in the log tail; `git status` clean before and after.
+
+**Security self-review:** no changes made; nothing to review. Staged demo bundle contains no secrets (static site, no backend), simulated-data disclosure intact.
+
+**Result:** no code change required. Demo-polish pass remains staged locally, **not deployed**, awaiting Antonio's verdict — launch post still HELD per directive.
+
+**Next:** Antonio's demo verdict (gate for launch post + redeploy); otherwise Phase 3 cloud provider adapters per directive order.
