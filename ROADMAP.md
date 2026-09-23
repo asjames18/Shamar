@@ -27,11 +27,14 @@ Prove the concept end to end:
 
 ## Phase 2 — Local Model Integration (zero-cost AI)
 
-1. Ollama provider adapter: discover installed models, associate a model with an agent.
-2. Test invocation from Shamar (prompt → response), recording tokens, latency, cost ($0 for local).
-3. Execution shown on the agent's timeline.
+1. Ollama provider adapter: discover installed models, associate a model with an agent. ✅ (2026-09-23) — `@shamar/providers` package: `OllamaAdapter` implements `ProviderAdapter` (ADR-0004) using only the documented Ollama REST API (`GET /api/tags`, `POST /api/chat` non-streaming); token counts from Ollama's own `prompt_eval_count`/`eval_count`, never fabricated; `estimateCost` returns 0 (local inference has no provider charge — definitional, not estimated). API: `GET /api/providers/:id/models`. Unreachable daemon → clear "not reachable" error, never a fake success.
+2. Test invocation from Shamar (prompt → response), recording tokens, latency, cost ($0 for local). ✅ (2026-09-23) — `POST /api/providers/:id/invoke` `{agent_id, model, messages, max_tokens?}` → real `InvokeResult` (text returned to caller, never stored) + `model.called` event with tokens_in/out, duration_ms, cost_usd 0. Input validated before the model is touched; prompt/response bodies never persisted.
+3. Execution shown on the agent's timeline. ✅ (2026-09-23) — the `model.called` event appears in `GET /api/agents/:id/detail` usage rollups and newest-first timeline.
+4. Provider validation: `POST /api/providers/:id/validate` now performs a real reachability check for Ollama (updates provider `status` + `last_health_check`); unimplemented kinds still return honest 501.
 
-**Exit criteria:** Shamar + Ollama proves zero-cost AI operation; a local model call appears as a real event with real latency/usage numbers.
+**Caveat:** no Ollama daemon exists in this sandbox, so Phase 2 was verified against a mock Ollama HTTP server implementing `/api/tags` + `/api/chat`. The adapter needs one real-daemon run on Antonio's machine (or any Ollama host) to close Phase 2: `ollama pull llama3.2 &&` invoke via the API.
+
+**Exit criteria:** Shamar + Ollama proves zero-cost AI operation; a local model call appears as a real event with real latency/usage numbers. ⏳ pending the real-daemon run above.
 
 ## Phase 3 — Cloud Provider Adapters
 

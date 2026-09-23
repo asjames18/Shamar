@@ -2,28 +2,6 @@
 
 Concise record of each work cycle: timestamp, task, changes, tests, risks, next task.
 
-## 2026-09-23 ~15:20 EDT - Docs: Justin Carter contribution credit commit
-
-**Task:** Land a small docs contribution under Justin Carter's GitHub identity so the Contributors graph includes @justincarterdev.
-
-**Changes:** CONTRIBUTORS.md intro wording ("People who build and maintain Shamar."); this log note.
-
-**Next:** Merge when Antonio clears.
-## 2026-09-23 ~15:12 EDT — Docs: Justin Carter contributor credit
-
-**Task:** Credit Justin Carter (@justincarterdev) as a normal contributor in public docs.
-
-**Changes:** CONTRIBUTORS.md lists Justin Carter with GitHub link only; removed prior special-role wording from this PR's docs.
-
-**Next:** Antonio merge of PR #1 after review.
-
-## 2026-09-23 ~15:00 EDT — Docs: CONTRIBUTORS credit
-
-**Task:** Add public CONTRIBUTORS.md listing Antonio (@asjames18) as creator/maintainer and Justin Carter (@justincarterdev) as contributor, plus README link.
-
-**Changes:** CONTRIBUTORS.md; README Docs + Contributing links; this log note.
-
-**Next:** none for this docs PR.
 ## 2026-09-23 12:45–13:00 EDT — Phase 0: Research + Foundation (cycle 1)
 
 **Task selected:** Charter §57 first assignment — landscape research, architecture proposal, foundation docs, MVP skeleton.
@@ -130,3 +108,62 @@ Concise record of each work cycle: timestamp, task, changes, tests, risks, next 
 **Milestone:** ✅ **Phase 1 vertical slice complete** — UI create → external script reports → dashboard updates → detail page shows activity and last check-in. All 7 Phase 1 items now ✅.
 
 **Next logical task (Phase 2):** Ollama provider adapter — model discovery (`/api/tags`) + test invocation recorded as real events with measured tokens/latency. Caveat: no Ollama daemon in this sandbox, so discovery/invocation must be designed defensively (graceful "Ollama not reachable" state) and E2E-verified on Antonio's machine or a runner with Ollama installed.
+
+## 2026-09-23 ~15:00 EDT — Phase 2, cycle 1: Ollama provider adapter + model discovery/invocation API
+
+**Task selected:** Phase 2 items 1–3 (Ollama adapter — discovery + test invocation recorded as real events). P2/P7.
+
+**Changes:**
+- `packages/providers/` (new workspace package `@shamar/providers`, zero runtime deps): `src/ollama.ts` — `OllamaAdapter implements ProviderAdapter` (ADR-0004) using only the documented Ollama REST API (`GET /api/tags`, `POST /api/chat` non-streaming). Token counts from Ollama's own `prompt_eval_count`/`eval_count` counters, never fabricated; `estimateCost` returns 0 (local inference has no provider charge — definitional, not estimated). Unreachable daemon → clear "Ollama not reachable at …" error, never a fake success. `src/index.ts` — `createProviderAdapter(kind, opts)` factory; unimplemented kinds throw (surfaced as HTTP 501).
+- `apps/api/src/providers.ts` (new): `adapterFor(provider)` maps a stored provider record to its adapter; `NotImplementedError` for kinds without an adapter.
+- `apps/api/src/store.ts`: `getProvider(id)`, `setProviderStatus(id, status)` (+ `last_health_check`); `appendEventInternal` now accepts internal-only `cost_usd` (defaults NULL); new public `appendServerEvent` for server-side event writes (client `/api/events` path still forces NULL per ADR-0003).
+- `apps/api/src/server.ts`: `GET /api/providers/:id/models` (502 on daemon failure, 501 for unimplemented kinds); `POST /api/providers/:id/validate` now performs a real reachability check for Ollama and persists `healthy`/`unhealthy` status (unimplemented kinds → honest 501, replacing the old stub); `POST /api/providers/:id/invoke` `{agent_id, model, messages, max_tokens?}` — validates input before touching the model, invokes, appends `model.called` event (tokens_in/out, duration_ms, cost_usd 0, no prompt/response bodies persisted), returns `{text, usage, latency_ms, model, event}`.
+- Root `package.json` build/lint/test/typecheck now include `packages/providers`; `eslint.config.mjs` covers the new package; `apps/api/package.json` declares `@shamar/providers` dep.
+- `ROADMAP.md`: Phase 2 items 1–4 marked done with the real-daemon caveat; `README.md`: new endpoints documented.
+
+**Tests run:** `npm run lint` ✅ · `npm run typecheck` ✅ · `npm test` — **43/43 pass** ✅ (31 existing + 12 new: 6 adapter unit tests against a mock Ollama HTTP server, 6 API endpoint tests incl. unreachable-daemon → ok:false/unhealthy, bad-input rejection before model touch, and unimplemented-kind → 501).
+**E2E verified (real server, fresh SQLite, mock Ollama daemon):** provider create → models → validate (`ok:true, status:healthy`, 5ms) → invoke → `model.called` event with real tokens (42 in/17 out), 7ms latency, cost 0; agent detail shows 1 model call, rollups correct; event `data` contains only model/provider/latency — no prompt/response bodies. Temp server/DB cleaned up.
+**Security self-review:** no secrets touched (Ollama needs no credential; validation is reachability, stated honestly); prompt/response bodies never logged or persisted (returned to caller only); client-asserted costs still rejected (server-side `appendServerEvent` only); message roles validated against a fixed allowlist; `AbortSignal.timeout` on all outbound calls.
+**Caveat / risk:** no Ollama daemon in this sandbox — verified against a mock implementing the documented API surface. One real-daemon run on Antonio's machine closes Phase 2 (`ollama pull llama3.2`, then invoke via the API).
+
+**Next logical task (Phase 2 close-out / Phase 3 prep):** real-daemon verification (needs Antonio's machine), or begin Phase 3 with the OpenRouter/OpenAI BYOK adapter design.
+
+## 2026-09-23 ~15:15 EDT — Contributor-readiness sprint, cycle 1: issue templates + good-first-issue drafts
+
+**Task selected:** P2 contributor-readiness — sprint items 3 (`.github/ISSUE_TEMPLATE/`) and 4 (good-first-issue drafts). No new product features.
+
+**Changes:**
+- `.github/ISSUE_TEMPLATE/bug_report.md` — structured bug template (repro steps, env, no-secrets warning, commit-hash field).
+- `.github/ISSUE_TEMPLATE/feature_request.md` — problem/proposal/acceptance-criteria template with a project-principles fit checklist (zero-cost, provider-neutral, evidence-over-hype, no secrets).
+- `.github/ISSUE_TEMPLATE/config.yml` — blank issues disabled; security reports routed to SECURITY.md (OWNER/REPO placeholder flagged for first push).
+- `docs/good-first-issues/` — README index + 6 drafts, each with title, context, acceptance criteria, hints, effort: 01 SDK `deleteAgent` (S, SDK lacks it while API supports DELETE), 02 `GET /api/providers/:id` (S, agents have single-read, providers don't), 03 sanitize `?limit=` on `GET /api/events` (S, real bug), 04 stdlib-only Python example client (M), 05 `--reset` flag for seed-demo.js (S), 06 dashboard provider list + health/validate (M).
+- `CONTRIBUTING.md` — cross-reference to the drafts folder and issue templates.
+
+**Tests run:** markdown/YAML-only change — no code touched. Verified: YAML frontmatter parses on all three template files ✅; repo secret-scan grep (same patterns as CI) clean on all new files ✅. During drafting, confirmed a real bug worth an issue: `GET /api/events?limit=abc` → 500 (`datatype mismatch`) because `NaN` survives the clamp in `store.queryEvents` — reproduced against built dist, documented as draft 03 instead of fixing (kept this unit to onboarding materials per sprint rules).
+**Security self-review:** no secrets, no code changes, no new attack surface; bug template explicitly warns against pasting keys; config.yml routes vuln reports to the private SECURITY.md path.
+**Working tree:** clean; committed locally as `c437501` (never pushed — Mosheh syncs).
+
+**Next logical task (sprint):** item 1 — expand CONTRIBUTING.md (prerequisites, install, how to run tests, branch/PR conventions, code style, definition of done); item 2 — README polish (demo link TBD — no live demo URL confirmed yet, needs Antonio's call per the launch-post gate); item 5 — verify every command in CONTRIBUTING/README quickstart by running it (docker compose path still unverifiable in this sandbox).
+
+## 2026-09-23 ~15:00 EDT — Docs: CONTRIBUTORS credit
+
+**Task:** Add public CONTRIBUTORS.md listing Antonio (@asjames18) as creator/maintainer and Justin Carter (@justincarterdev) as contributor, plus README link.
+
+**Changes:** CONTRIBUTORS.md; README Docs + Contributing links; this log note.
+
+**Next:** none for this docs PR.
+## 2026-09-23 ~15:12 EDT — Docs: Justin Carter contributor credit
+
+**Task:** Credit Justin Carter (@justincarterdev) as a normal contributor in public docs.
+
+**Changes:** CONTRIBUTORS.md lists Justin Carter with GitHub link only; removed prior special-role wording from this PR's docs.
+
+**Next:** Antonio merge of PR #1 after review.
+
+## 2026-09-23 ~15:20 EDT - Docs: Justin Carter contribution credit commit
+
+**Task:** Land a small docs contribution under Justin Carter's GitHub identity so the Contributors graph includes @justincarterdev.
+
+**Changes:** CONTRIBUTORS.md intro wording ("People who build and maintain Shamar."); this log note.
+
+**Next:** Merge when Antonio clears.

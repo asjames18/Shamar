@@ -42,6 +42,9 @@ The seed script is idempotent (reuses agents by name) and leaves a fresh round o
 - Event ingestion: `POST /api/events` (validated, append-only)
 - Dashboard summary: `GET /api/dashboard/summary`
 - Minimal web dashboard (total agents, active agents, recent activity)
+- Provider model discovery: `GET /api/providers/:id/models` (Ollama: installed models via `/api/tags`)
+- Provider health validation: `POST /api/providers/:id/validate` (real reachability check; updates provider status)
+- Test model invocation: `POST /api/providers/:id/invoke` — prompt → response with real token counts and latency, recorded as a `model.called` event on the agent's timeline (prompt/response bodies are never stored; local cost is $0 by definition)
 - Example client script demonstrating register → heartbeat → events
 
 ## Repo layout
@@ -51,7 +54,7 @@ The seed script is idempotent (reuses agents by name) and leaves a fresh round o
 /apps/web        Dashboard (Next.js)
 /packages/types  Shared TS types: Agent, AgentEvent, Provider
 /packages/core   Registry domain logic (planned)
-/packages/providers  Provider adapters — Ollama first (planned)
+/packages/providers  Provider adapters — Ollama implemented (Phase 2), cloud adapters planned (Phase 3)
 /packages/telemetry   Event schema + cost computation (planned)
 /packages/sdk    TypeScript SDK — register/heartbeat/event helpers (zero deps)
 /docs            Vision, roadmap, architecture, ADRs, competitive landscape

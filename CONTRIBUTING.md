@@ -34,7 +34,11 @@ npm run build
 
 ## Good first issues
 
-Look for the `good-first-issue` label. The example client in `examples/` is a friendly place to start.
+Look for the `good-first-issue` label. Draft write-ups live in
+`docs/good-first-issues/` (title, acceptance criteria, hints, effort estimate);
+the maintainer publishes them as real issues when ready. Use the bug report /
+feature request templates in `.github/ISSUE_TEMPLATE/` when filing new ones.
+The example client in `examples/` is a friendly place to start.
 
 ## Security issues
 

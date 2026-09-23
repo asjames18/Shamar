@@ -9,6 +9,8 @@
 import { createServer, IncomingMessage, ServerResponse } from 'node:http';
 import { scryptSync, timingSafeEqual } from 'node:crypto';
 import { openStorage, Storage, ValidationError } from './store.js';
+import { adapterFor, NotImplementedError } from './providers.js';
+import type { InvokeRequest } from '@control-plane/types';
 
 const PORT = Number(process.env.API_PORT ?? 4000);
 
@@ -133,11 +135,106 @@ export function createApp(storage: Storage) {
         const provider = storage.createProvider((await readJson(req)) as never);
         return send(res, 201, { provider });
       }
+      const modelsMatch = path.match(/^\/api\/providers\/([^/]+)\/models$/);
+      if (modelsMatch && method === 'GET') {
+        const provider = storage.getProvider(decodeURIComponent(modelsMatch[1]));
+        if (!provider) return send(res, 404, { error: 'provider not found' });
+        let adapter;
+        try {
+          adapter = adapterFor(provider);
+        } catch (err) {
+          if (err instanceof NotImplementedError) return send(res, 501, { error: err.message });
+          throw err;
+        }
+        try {
+          return send(res, 200, { models: await adapter.listModels() });
+        } catch (err) {
+          return send(res, 502, { error: (err as Error).message });
+        }
+      }
       const valMatch = path.match(/^\/api\/providers\/([^/]+)\/validate$/);
       if (valMatch && method === 'POST') {
-        // Honest stub: live credential validation lands with the provider
-        // adapters in Phase 2/3 (ADR-0004). We refuse to fake a check.
-        return send(res, 501, { error: 'credential validation not implemented yet (roadmap Phase 2/3)' });
+        const provider = storage.getProvider(decodeURIComponent(valMatch[1]));
+        if (!provider) return send(res, 404, { error: 'provider not found' });
+        let adapter;
+        try {
+          adapter = adapterFor(provider);
+        } catch (err) {
+          if (err instanceof NotImplementedError) return send(res, 501, { error: err.message });
+          throw err;
+        }
+        const result = await adapter.validateCredentials();
+        storage.setProviderStatus(provider.id, result.ok ? 'healthy' : 'unhealthy');
+        return send(res, 200, { ...result, status: result.ok ? 'healthy' : 'unhealthy' });
+      }
+      const invokeMatch = path.match(/^\/api\/providers\/([^/]+)\/invoke$/);
+      if (invokeMatch && method === 'POST') {
+        const provider = storage.getProvider(decodeURIComponent(invokeMatch[1]));
+        if (!provider) return send(res, 404, { error: 'provider not found' });
+        const body = (await readJson(req)) as {
+          agent_id?: unknown;
+          model?: unknown;
+          messages?: unknown;
+          max_tokens?: unknown;
+        };
+        if (typeof body.agent_id !== 'string' || !body.agent_id) throw new ValidationError('agent_id is required');
+        if (typeof body.model !== 'string' || !body.model.trim()) throw new ValidationError('model is required');
+        if (!Array.isArray(body.messages) || body.messages.length === 0) {
+          throw new ValidationError('messages must be a non-empty array');
+        }
+        const messages: InvokeRequest['messages'] = body.messages.map((m) => {
+          const role = (m as { role?: unknown })?.role;
+          const content = (m as { content?: unknown })?.content;
+          if (role !== 'system' && role !== 'user' && role !== 'assistant') {
+            throw new ValidationError('each message needs role: system|user|assistant');
+          }
+          if (typeof content !== 'string') throw new ValidationError('each message needs content: string');
+          return { role: role as 'system' | 'user' | 'assistant', content };
+        });
+        if (!storage.getAgent(body.agent_id)) throw new ValidationError(`unknown agent_id: ${body.agent_id}`);
+        let adapter;
+        try {
+          adapter = adapterFor(provider);
+        } catch (err) {
+          if (err instanceof NotImplementedError) return send(res, 501, { error: err.message });
+          throw err;
+        }
+        const invokeReq: InvokeRequest = {
+          model: body.model,
+          messages,
+          ...(typeof body.max_tokens === 'number' ? { max_tokens: body.max_tokens } : {}),
+        };
+        let result;
+        try {
+          result = await adapter.invokeModel(invokeReq);
+        } catch (err) {
+          return send(res, 502, { error: (err as Error).message });
+        }
+        // Record the call on the agent's timeline. Prompt/response bodies are
+        // never persisted — only usage numbers, latency, and model identity.
+        const event = storage.appendServerEvent({
+          agent_id: body.agent_id,
+          type: 'model.called',
+          actor: 'agent',
+          summary: `Model call: ${result.model} (${result.usage.tokens_in}+${result.usage.tokens_out} tokens, ${result.latency_ms}ms)`,
+          data: {
+            model: result.model,
+            provider: provider.id,
+            provider_kind: provider.kind,
+            latency_ms: result.latency_ms,
+          },
+          tokens_in: result.usage.tokens_in,
+          tokens_out: result.usage.tokens_out,
+          cost_usd: adapter.estimateCost(result.usage),
+          duration_ms: result.latency_ms,
+        });
+        return send(res, 200, {
+          text: result.text,
+          usage: result.usage,
+          latency_ms: result.latency_ms,
+          model: result.model,
+          event,
+        });
       }
 
       // --- dashboard ----------------------------------------------------

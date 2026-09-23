@@ -250,3 +250,141 @@ test('delete agent', async () => {
   const gone = await api('GET', `/api/agents/${agentId}`);
   assert.equal(gone.status, 404);
 });
+
+// ---------------------------------------------------------------------------
+// Phase 2: Ollama adapter endpoints (mock Ollama HTTP server — no daemon needed)
+// ---------------------------------------------------------------------------
+
+import { createServer as createMockServer } from 'node:http';
+
+function readMockBody(req: import('node:http').IncomingMessage): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    req.on('data', (c: Buffer) => chunks.push(c));
+    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+    req.on('error', reject);
+  });
+}
+
+const mockOllama = createMockServer(async (req, res) => {
+  const url = new URL(req.url ?? '/', 'http://localhost');
+  if (url.pathname === '/api/tags' && req.method === 'GET') {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ models: [{ name: 'llama3.2:latest' }] }));
+    return;
+  }
+  if (url.pathname === '/api/chat' && req.method === 'POST') {
+    const body = JSON.parse(await readMockBody(req)) as { model?: string };
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(
+      JSON.stringify({
+        model: body.model,
+        message: { role: 'assistant', content: 'Mock reply' },
+        prompt_eval_count: 120,
+        eval_count: 410,
+      }),
+    );
+    return;
+  }
+  res.writeHead(404, { 'content-type': 'application/json' });
+  res.end(JSON.stringify({ error: 'not found' }));
+});
+
+let mockBase = '';
+before(async () => {
+  await new Promise<void>((resolve) => mockOllama.listen(0, resolve));
+  mockBase = `http://localhost:${(mockOllama.address() as AddressInfo).port}`;
+});
+after(async () => {
+  await new Promise<void>((resolve) => mockOllama.close(() => resolve()));
+});
+
+async function createOllamaProvider(baseUrl: string) {
+  const { status, json } = await api('POST', '/api/providers', { kind: 'ollama', name: `Mock Ollama ${baseUrl}`, base_url: baseUrl });
+  assert.equal(status, 201);
+  return req(json.provider, 'provider').id as string;
+}
+
+test('ollama: models lists installed models from the daemon', async () => {
+  const id = await createOllamaProvider(mockBase);
+  const { status, json } = await api('GET', `/api/providers/${id}/models`);
+  assert.equal(status, 200);
+  const models = (json as { models?: Array<{ id: string; name: string }> }).models ?? [];
+  assert.deepEqual(models.map((m) => m.name), ['llama3.2:latest']);
+});
+
+test('ollama: validate marks reachable provider healthy', async () => {
+  const id = await createOllamaProvider(mockBase);
+  const { status, json } = await api('POST', `/api/providers/${id}/validate`);
+  assert.equal(status, 200);
+  assert.equal((json as { ok?: boolean }).ok, true);
+  const list = await api('GET', '/api/providers');
+  const provider = req(list.json.providers, 'providers').find((p) => p.id === id);
+  assert.equal(provider && (provider as { status?: string }).status, 'healthy');
+});
+
+test('ollama: validate marks unreachable provider unhealthy', async () => {
+  const id = await createOllamaProvider('http://localhost:1');
+  const { status, json } = await api('POST', `/api/providers/${id}/validate`);
+  assert.equal(status, 200);
+  assert.equal((json as { ok?: boolean }).ok, false);
+  assert.match((json as { message?: string }).message ?? '', /not reachable/);
+});
+
+test('ollama: invoke records model.called with real tokens, latency, cost 0', async () => {
+  const providerId = await createOllamaProvider(mockBase);
+  const created = await api('POST', '/api/agents', { name: 'Invoke Test Agent' });
+  const agentId = req(created.json.agent, 'agent').id;
+  const { status, json } = await api('POST', `/api/providers/${providerId}/invoke`, {
+    agent_id: agentId,
+    model: 'llama3.2:latest',
+    messages: [{ role: 'user', content: 'Say hi' }],
+  });
+  assert.equal(status, 200);
+  const body = json as { text?: string; usage?: { tokens_in: number; tokens_out: number }; event?: { id: string; type: string; tokens_in: number; tokens_out: number; cost_usd: number | null; data: Record<string, unknown> } };
+  assert.equal(body.text, 'Mock reply');
+  assert.equal(body.usage?.tokens_in, 120);
+  assert.equal(body.usage?.tokens_out, 410);
+  const event = req(body.event, 'event');
+  assert.equal(event.type, 'model.called');
+  assert.equal(event.cost_usd, 0); // local inference: $0 by definition, not estimated
+  // Prompt/response bodies must never be persisted:
+  assert.ok(!('messages' in event.data) && !('content' in event.data) && !('text' in event.data));
+
+  const detail = await api('GET', `/api/agents/${agentId}/detail`);
+  assert.equal(detail.status, 200);
+  const usage = req(detail.json.usage, 'usage');
+  assert.equal(usage.model_calls, 1);
+  assert.equal(usage.tokens_in_total, 120);
+  assert.equal(usage.tokens_out_total, 410);
+  assert.equal(usage.events_by_type['model.called'], 1);
+});
+
+test('ollama: invoke rejects bad input before touching the model', async () => {
+  const providerId = await createOllamaProvider(mockBase);
+  const missing = await api('POST', `/api/providers/${providerId}/invoke`, { model: 'x', messages: [] });
+  assert.equal(missing.status, 400);
+  const badAgent = await api('POST', `/api/providers/${providerId}/invoke`, {
+    agent_id: 'nope',
+    model: 'x',
+    messages: [{ role: 'user', content: 'hi' }],
+  });
+  assert.equal(badAgent.status, 400);
+  assert.match(req(badAgent.json.error, 'error'), /unknown agent_id/);
+  const unknownProvider = await api('POST', '/api/providers/nope/invoke', {
+    agent_id: 'nope',
+    model: 'x',
+    messages: [{ role: 'user', content: 'hi' }],
+  });
+  assert.equal(unknownProvider.status, 404);
+});
+
+test('providers: unimplemented kinds return honest 501', async () => {
+  const { status, json } = await api('POST', '/api/providers', { kind: 'openai', name: 'OpenAI BYOK' });
+  assert.equal(status, 201);
+  const id = req(json.provider, 'provider').id;
+  const validate = await api('POST', `/api/providers/${id}/validate`);
+  assert.equal(validate.status, 501);
+  const models = await api('GET', `/api/providers/${id}/models`);
+  assert.equal(models.status, 501);
+});

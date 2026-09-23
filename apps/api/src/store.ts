@@ -37,10 +37,30 @@ export interface Storage {
   getAgentDetail(id: string): AgentDetail | null;
   // events
   appendEvent(input: AgentEventInput): AgentEvent;
+  /**
+   * Server-side event append (internal use only, never exposed via /api/events).
+   * Unlike appendEvent, the server may set cost_usd when it is known by
+   * definition — e.g. 0 for local Ollama inference, which has no provider
+   * charge. Client-asserted costs are never accepted (ADR-0003).
+   */
+  appendServerEvent(input: {
+    agent_id: string;
+    type: string;
+    actor?: EventActor;
+    summary?: string;
+    data?: Record<string, unknown>;
+    tokens_in?: number | null;
+    tokens_out?: number | null;
+    cost_usd?: number | null;
+    duration_ms?: number | null;
+  }): AgentEvent;
   queryEvents(opts: { agent_id?: string; type?: string; limit?: number }): AgentEvent[];
   // providers
   listProviders(): Provider[];
+  getProvider(id: string): Provider | null;
   createProvider(input: ProviderInput): Provider;
+  /** Record a health-check outcome; updates status + last_health_check. */
+  setProviderStatus(id: string, status: Provider['status']): Provider | null;
   // dashboard
   dashboardSummary(): DashboardSummary;
   close(): void;
@@ -298,6 +318,8 @@ export class SqliteStorage implements Storage {
     data?: Record<string, unknown>;
     tokens_in?: number | null;
     tokens_out?: number | null;
+    /** Internal-only: set only when cost is known by definition (e.g. 0 for local inference). */
+    cost_usd?: number | null;
     duration_ms?: number | null;
     occurred_at?: string;
   }): AgentEvent {
@@ -311,7 +333,7 @@ export class SqliteStorage implements Storage {
     this.db
       .prepare(
         `INSERT INTO events (id, agent_id, type, occurred_at, actor, summary, data, tokens_in, tokens_out, cost_usd, duration_ms)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         id,
@@ -323,14 +345,31 @@ export class SqliteStorage implements Storage {
         JSON.stringify(input.data ?? {}),
         input.tokens_in ?? null,
         input.tokens_out ?? null,
+        input.cost_usd ?? null,
         input.duration_ms ?? null,
       );
-    // cost_usd is intentionally NULL: server-side pricing tables land in Phase 3 (ADR-0004).
+    // cost_usd defaults to NULL: unknown costs are recorded as unknown, never
+    // guessed (ADR-0003). Server-side pricing tables land in Phase 3 (ADR-0004).
     const r = this.db.prepare('SELECT * FROM events WHERE id = ?').get(id) as Record<string, unknown>;
     return rowToEvent(r);
   }
 
   appendEvent(input: AgentEventInput): AgentEvent {
+    if (!this.getAgent(input.agent_id)) throw new ValidationError(`unknown agent_id: ${input.agent_id}`);
+    return this.appendEventInternal(input);
+  }
+
+  appendServerEvent(input: {
+    agent_id: string;
+    type: string;
+    actor?: EventActor;
+    summary?: string;
+    data?: Record<string, unknown>;
+    tokens_in?: number | null;
+    tokens_out?: number | null;
+    cost_usd?: number | null;
+    duration_ms?: number | null;
+  }): AgentEvent {
     if (!this.getAgent(input.agent_id)) throw new ValidationError(`unknown agent_id: ${input.agent_id}`);
     return this.appendEventInternal(input);
   }
@@ -374,6 +413,16 @@ export class SqliteStorage implements Storage {
       .prepare('INSERT INTO providers (id, kind, name, base_url, has_credential, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
       .run(id, input.kind, input.name.trim(), input.base_url ?? null, input.credential ? 1 : 0, 'unknown', now());
     return this.listProviders().find((p) => p.id === id) as Provider;
+  }
+
+  getProvider(id: string): Provider | null {
+    return this.listProviders().find((p) => p.id === id) ?? null;
+  }
+
+  setProviderStatus(id: string, status: Provider['status']): Provider | null {
+    if (!this.getProvider(id)) return null;
+    this.db.prepare('UPDATE providers SET status = ?, last_health_check = ? WHERE id = ?').run(status, now(), id);
+    return this.getProvider(id);
   }
 
   dashboardSummary(): DashboardSummary {
