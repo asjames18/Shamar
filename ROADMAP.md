@@ -2,6 +2,12 @@
 
 Derived from the project charter (§48–§51). Each phase ends with something working and testable. No phase starts before the previous one is stable.
 
+## Where we are (2026-09-23)
+
+- **Done:** Phase 0 (research + foundation). Phase 1 vertical slice — agent registry, event ingestion, dashboard, agent detail page, TypeScript SDK, demo seed script, dashboard registration UI — exit criteria met 2026-09-23. Phase 2 Ollama adapter (model discovery, validation, invocation) — verified against a mock daemon; one real-daemon run still pending.
+- **In progress:** Contributor-readiness sprint — `CONTRIBUTING.md`, README polish, issue templates ✅, good-first-issue drafts ✅, `AGENTS.md` ✅, `AGENT_START.md` ✅, `docs/STATUS.md` ✅, quickstart verification.
+- **Next:** Demo polish pass → launch post (**held** until Antonio judges the demo attractive) → Phase 2 real-daemon close-out → Phase 3 cloud provider adapters.
+
 ## Phase 0 — Research + Foundation ✅ (in progress)
 
 - [x] Vision, roadmap, architecture docs

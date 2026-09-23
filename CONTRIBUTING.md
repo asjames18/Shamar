@@ -32,6 +32,10 @@ npm run build
 
 `type(scope): short description` — e.g. `feat(registry): add agent heartbeat endpoint`, `fix(events): reject unknown event types with hint`, `docs(adr): record provider interface decision`.
 
+## Pull requests
+
+PR descriptions must stand alone: context, what changed, why this approach, verification (exact commands + results), risks/notes. Template in `AGENTS.md` ("PR descriptions that stand alone"). A stranger should understand the PR without asking you anything.
+
 ## Good first issues
 
 Look for the `good-first-issue` label. Draft write-ups live in

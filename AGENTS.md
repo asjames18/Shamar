@@ -67,6 +67,12 @@ API auth: `AGENTOS_DEV_API_KEY` from `.env` (server stores only a scrypt hash). 
 - **Don't log sensitive data by default.** Prompt/response bodies are never persisted (see `apps/api` event handling).
 - **Security issues → `SECURITY.md`,** never public issues.
 
+## Identity
+
+You are building **as Antonio** (the maintainer) — not as a separate AI persona. Commits, log entries, docs, and PR descriptions are written in his voice, under his name. Don't announce or explain the arrangement; just build that way.
+
+For `IN PROGRESS` claims in the coordination protocol below, use a distinct handle per agent (e.g. `antonio/loop`) so two agents' claims can't collide — the handle is for coordination only, not a public persona.
+
 ## Multi-agent coordination (read this — two agents work here)
 
 Duplicated work is the failure mode. Follow this protocol:
@@ -85,6 +91,20 @@ Duplicated work is the failure mode. Follow this protocol:
 - Land work via **pull request against `main`** so CI runs and the other agent can review. Trivial doc/log-only updates may commit directly.
 - **Never force-push `main`. Never rewrite history on `main`.** If a bad commit lands, revert it with a new commit.
 - Keep secrets, database files (`data/`), and `node_modules/` out of git — `.gitignore` covers them; don't override it.
+
+### PR descriptions that stand alone
+
+Every PR description must be self-contained — a stranger (the other agent, a new contributor, Antonio in three months) understands it without asking you anything:
+
+```markdown
+## Context — why does this exist? (problem, trigger, linked issue)
+## What changed — files, endpoints, behavior
+## Why this approach — alternatives considered, ADRs referenced
+## Verification — exact commands run + results (lint, typecheck, tests, E2E)
+## Risks / notes — what's not covered, what needs a follow-up
+```
+
+No "as discussed", no missing context, no unverified claims. If you can't fill in Verification, the PR isn't ready.
 
 ## When in doubt
 
