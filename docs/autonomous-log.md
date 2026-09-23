@@ -2,11 +2,11 @@
 
 Concise record of each work cycle: timestamp, task, changes, tests, risks, next task.
 
-## 2026-09-23 ~15:12 EDT — Docs: Justin Carter as contributor (no AI label)
+## 2026-09-23 ~15:12 EDT — Docs: Justin Carter contributor credit
 
-**Task:** Per Antonio, credit Justin Carter (@justincarterdev) as a normal contributor in public docs — do not label as AI/assistant/bot.
+**Task:** Credit Justin Carter (@justincarterdev) as a normal contributor in public docs.
 
-**Changes:** CONTRIBUTORS.md line is contributor-only with GitHub link; scrubbed AI/assistant wording from docs on this PR.
+**Changes:** CONTRIBUTORS.md lists Justin Carter with GitHub link only; removed prior special-role wording from this PR's docs.
 
 **Next:** Antonio merge of PR #1 after review.
 
