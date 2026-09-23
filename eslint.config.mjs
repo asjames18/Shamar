@@ -3,7 +3,7 @@ import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
   {
-    files: ['apps/api/src/**/*.ts', 'packages/types/src/**/*.ts'],
+    files: ['apps/api/src/**/*.ts', 'packages/types/src/**/*.ts', 'packages/sdk/src/**/*.ts'],
     extends: [tseslint.configs.recommended],
     rules: {
       '@typescript-eslint/no-explicit-any': 'error',

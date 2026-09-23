@@ -27,6 +27,14 @@ cd examples && node register-and-report.js
 
 Watch the agent and its activity appear on the dashboard. No cloud account, no API credits, no paid model needed.
 
+Want a pre-populated demo workforce? Seed 4 demo agents with two days of realistic activity:
+
+```bash
+SHAMAR_API_KEY=<your-dev-key> node scripts/seed-demo.js
+```
+
+The seed script is idempotent (reuses agents by name) and leaves a fresh round of recent events each run so the dashboard's activity view stays alive.
+
 ## What works today (Phase 0/1 skeleton)
 
 - Agent Registry: `GET/POST /api/agents`, `GET/PATCH/DELETE /api/agents/:id`
@@ -45,7 +53,7 @@ Watch the agent and its activity appear on the dashboard. No cloud account, no A
 /packages/core   Registry domain logic (planned)
 /packages/providers  Provider adapters — Ollama first (planned)
 /packages/telemetry   Event schema + cost computation (planned)
-/packages/sdk    TypeScript SDK (planned)
+/packages/sdk    TypeScript SDK — register/heartbeat/event helpers (zero deps)
 /docs            Vision, roadmap, architecture, ADRs, competitive landscape
 /examples        Sample clients
 ```

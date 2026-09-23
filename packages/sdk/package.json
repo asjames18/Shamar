@@ -1,0 +1,1 @@
+{"description":"Zero-dependency TypeScript client for the Shamar control-plane API: register agents, send heartbeats and events.","license":"Apache-2.0","main":"dist/index.js","name":"@shamar/sdk","private":true,"type":"commonjs","types":"dist/index.d.ts","version":"0.1.0"}

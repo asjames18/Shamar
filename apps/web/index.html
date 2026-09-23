@@ -40,6 +40,15 @@
   .kv .k { color:var(--dim); font-size:11px; text-transform:uppercase; letter-spacing:.5px; display:block; margin-bottom:2px; }
   .timeline td:first-child { white-space:nowrap; color:var(--dim); }
   .num { text-align:right; font-variant-numeric:tabular-nums; }
+  .btn { background:var(--accent); color:#062033; border:0; border-radius:8px; padding:9px 16px; font-weight:700; cursor:pointer; font-size:14px; }
+  .btn:hover { filter:brightness(1.1); }
+  .btn.ghost { background:transparent; color:var(--accent); border:1px solid var(--line); font-weight:600; }
+  #agent-form { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:18px; margin-bottom:18px; }
+  #agent-form .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:12px; margin-bottom:14px; }
+  #agent-form label { display:block; font-size:12px; color:var(--dim); text-transform:uppercase; letter-spacing:.5px; margin-bottom:4px; }
+  #agent-form input { width:100%; background:var(--bg); border:1px solid var(--line); color:var(--txt); padding:8px 10px; border-radius:8px; }
+  .form-actions { display:flex; gap:10px; align-items:center; }
+  .form-ok { color:var(--ok); font-size:13px; }
 </style>
 </head>
 <body>
@@ -58,6 +67,22 @@
     <div class="cards" id="cards"></div>
 
     <h2>Agents</h2>
+    <button class="btn ghost" id="show-form" style="margin-bottom:14px">＋ Add agent</button>
+    <form id="agent-form" style="display:none">
+      <div class="grid">
+        <div><label for="f-name">Name *</label><input id="f-name" required placeholder="Research Agent"></div>
+        <div><label for="f-desc">Description</label><input id="f-desc" placeholder="Deep-dive research on new topics"></div>
+        <div><label for="f-dept">Department</label><input id="f-dept" placeholder="Research"></div>
+        <div><label for="f-owner">Owner</label><input id="f-owner" placeholder="antonio@example.com"></div>
+        <div><label for="f-provider">Provider</label><input id="f-provider" placeholder="Ollama"></div>
+        <div><label for="f-model">Model</label><input id="f-model" placeholder="llama3.1:8b"></div>
+      </div>
+      <div class="form-actions">
+        <button type="submit" class="btn">Register agent</button>
+        <button type="button" class="btn ghost" id="hide-form">Cancel</button>
+        <span class="form-ok" id="form-ok"></span>
+      </div>
+    </form>
     <table>
       <thead><tr><th>Name</th><th>Department</th><th>Model</th><th>Status</th><th>Last heartbeat</th></tr></thead>
       <tbody id="agents"><tr><td colspan="5">—</td></tr></tbody>
@@ -69,7 +94,7 @@
       <tbody id="events"><tr><td colspan="3">—</td></tr></tbody>
     </table>
 
-    <p class="hint">Tip: run <code>node examples/register-and-report.js</code> to register a demo agent and watch activity appear here. API key is read from <code>AGENTOS_DEV_API_KEY</code> or the field above. Click an agent's name for its detail page.</p>
+    <p class="hint">Tip: click <strong>Add agent</strong> to register an agent from this dashboard, or run <code>node examples/register-and-report.js</code> to register one from the command line. Activity appears here live. API key is read from <code>AGENTOS_DEV_API_KEY</code> or the field above. Click an agent's name for its detail page.</p>
   </div>
 
   <!-- Detail view -->
@@ -99,6 +124,57 @@ async function get(path) {
   if (!r.ok) throw new Error('request failed: ' + r.status);
   return r.json();
 }
+
+async function post(path, body) {
+  const r = await fetch(path, {
+    method: 'POST',
+    headers: { 'x-api-key': keyInput.value, 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (r.status === 401) throw new Error('unauthorized — enter the API key from your .env (AGENTOS_DEV_API_KEY)');
+  if (!r.ok) {
+    let detail = '';
+    try { detail = (await r.json()).error || ''; } catch {}
+    throw new Error(detail || ('request failed: ' + r.status));
+  }
+  return r.json();
+}
+
+const form = document.getElementById('agent-form');
+const showFormBtn = document.getElementById('show-form');
+showFormBtn.addEventListener('click', () => {
+  form.style.display = '';
+  showFormBtn.style.display = 'none';
+  document.getElementById('form-ok').textContent = '';
+  document.getElementById('f-name').focus();
+});
+document.getElementById('hide-form').addEventListener('click', () => {
+  form.style.display = 'none';
+  showFormBtn.style.display = '';
+  document.getElementById('err').textContent = '';
+});
+form.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const val = id => document.getElementById(id).value.trim();
+  const name = val('f-name');
+  try {
+    document.getElementById('err').textContent = '';
+    const { agent } = await post('/api/agents', {
+      name,
+      description: val('f-desc'),
+      department: val('f-dept'),
+      owner: val('f-owner'),
+      provider: val('f-provider'),
+      model: val('f-model'),
+    });
+    form.reset();
+    document.getElementById('form-ok').textContent = 'Registered — ' + agent.id.slice(0, 8) + '…';
+    await refreshList();
+    showDetail(agent.id); // jump straight to the new agent's detail page
+  } catch (err) {
+    document.getElementById('err').textContent = err.message;
+  }
+});
 
 async function refreshList() {
   const [sum, agents] = await Promise.all([get('/api/dashboard/summary'), get('/api/agents')]);

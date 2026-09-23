@@ -19,10 +19,11 @@ Prove the concept end to end:
 2. **Event ingestion API** — `POST /events` accepts machine-readable events (`agent.started`, `model.called`, `tool.called`, `task.completed`, `task.failed`, …). HMAC/API-key auth.
 3. **Dashboard** — total agents, active agents, recent activity, basic usage.
 4. **Agent detail page** ✅ — identity, purpose, model, provider, owner, tools, recent events, usage metrics, last heartbeat. API: `GET /api/agents/:id/detail` (usage rollups + activity timeline); dashboard has a clickable agent detail view with live refresh.
-5. **Example client** — script that registers an agent, sends heartbeat, submits events; activity appears on dashboard in real time.
-6. **TypeScript SDK (minimal)** — `register`, `heartbeat`, `event`, `taskStarted`, `taskCompleted`.
+5. **Example client** ✅ — script that registers an agent, sends heartbeat, submits events; activity appears on dashboard in real time.
+6. **TypeScript SDK (minimal)** ✅ — `register`, `heartbeat`, `event`, `taskStarted`, `taskCompleted` (+ `taskFailed`, `modelCalled`, `toolCalled`, batch ingest, detail/summary reads). Zero runtime deps; `packages/sdk` with integration tests.
+7. **Demo seed script** ✅ — `scripts/seed-demo.js` uses the SDK to seed 4 demo agents (Support/Sales/Research/Finance), a demo Ollama provider, ~2 days of backfilled activity + a fresh round of recent events per run; idempotent by name; verified E2E against real SQLite.
 
-**Exit criteria:** the charter's first slice works — a user creates "Research Agent" in the UI, an external script reports started/model-called/task-completed, the dashboard updates, and the agent detail page shows the activity and last check-in.
+**Exit criteria:** the charter's first slice works — a user creates "Research Agent" in the UI, an external script reports started/model-called/task-completed, the dashboard updates, and the agent detail page shows the activity and last check-in. ✅ **Met 2026-09-23** — dashboard gained an Add-agent form (name required, optional identity fields); verified E2E: form-style POST → heartbeat → agent.started/model.called/task.completed → summary showed 1 agent / 5 events / 24h, detail showed correct usage rollups, timeline, and last check-in.
 
 ## Phase 2 — Local Model Integration (zero-cost AI)
 
