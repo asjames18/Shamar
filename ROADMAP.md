@@ -5,7 +5,7 @@ Derived from the project charter (§48–§51). Each phase ends with something w
 ## Where we are (2026-09-23)
 
 - **Done:** Phase 0 (research + foundation). Phase 1 vertical slice — agent registry, event ingestion, dashboard, agent detail page, TypeScript SDK, demo seed script, dashboard registration UI — exit criteria met 2026-09-23. Phase 2 Ollama adapter (model discovery, validation, invocation) — verified against a mock daemon; one real-daemon run still pending.
-- **In progress:** Contributor-readiness sprint — `CONTRIBUTING.md`, README polish, issue templates ✅, good-first-issue drafts ✅, `AGENTS.md` ✅, `AGENT_START.md` ✅, `docs/STATUS.md` ✅, quickstart verification.
+- **In progress:** Contributor-readiness sprint — `CONTRIBUTING.md` ✅ (expanded + every command verified end-to-end), README polish ✅ (30-second pitch, live demo link, verified 5-minute quickstart, fixed stale Next.js/web and clone-URL claims), issue templates ✅, good-first-issue drafts ✅, `AGENTS.md` ✅, `AGENT_START.md` ✅, `docs/STATUS.md` ✅, quickstart verification ✅ (docker compose path unverifiable in sandbox — no Docker). **Sprint complete 2026-09-23 ~16:35 EDT.**
 - **Next:** Demo polish pass → launch post (**held** until Antonio judges the demo attractive) → Phase 2 real-daemon close-out → Phase 3 cloud provider adapters.
 
 ## Phase 0 — Research + Foundation ✅ (in progress)

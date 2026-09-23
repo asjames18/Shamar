@@ -9,9 +9,9 @@ _Last updated: 2026-09-23 ~15:35 EDT. Update this file whenever the state below 
 - ✅ Issue templates (bug report / feature request) + config
 - ✅ 6 good-first-issue drafts in `docs/good-first-issues/`
 - ✅ `AGENTS.md` (agent working manual) + `AGENT_START.md` (onboarding brief)
-- ⏳ `CONTRIBUTING.md` expansion (prerequisites, install, test flow, PR conventions)
-- ⏳ README polish (vision in 30 seconds, demo link, quickstart)
-- ⏳ Verify every quickstart command by actually running it
+- ✅ `CONTRIBUTING.md` expansion (prerequisites, install, test flow, branch/PR conventions, code style, definition of done)
+- ✅ README polish (30-second vision, live demo link, verified quickstart) — completed 2026-09-23 ~16:35; also fixed stale `apps/web` "Next.js" claim, `<repo-url>` placeholder, and `dev:api` "rebuild on change" wording
+- ✅ Verified every quickstart command by actually running it (2026-09-23: lint/typecheck/test-43/build green; example client + seed script E2E against live API incl. authenticated dashboard summary; `docker compose up` unverifiable here — no Docker in sandbox)
 
 ## Next (queued)
 

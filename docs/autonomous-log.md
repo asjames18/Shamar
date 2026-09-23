@@ -167,3 +167,51 @@ Concise record of each work cycle: timestamp, task, changes, tests, risks, next 
 **Changes:** CONTRIBUTORS.md intro wording ("People who build and maintain Shamar."); this log note.
 
 **Next:** Merge when Antonio clears.
+
+## 2026-09-23 ~15:44 EDT — IN PROGRESS: contributor-readiness sprint, cycle 2: expand CONTRIBUTING.md + verify commands (agent: antonio/loop)
+
+## 2026-09-23 ~16:10 EDT — Contributor-readiness sprint, cycle 2: CONTRIBUTING.md expansion + command verification (agent: antonio/loop)
+
+**Task selected:** P2 contributor-readiness — sprint items 1 (CONTRIBUTING.md expansion) and 5 (verify every quickstart command).
+
+**Changes:**
+- `CONTRIBUTING.md` — full expansion: Prerequisites (Node >= 22, npm, git, Docker optional; no cloud accounts/credits needed), Install and run, How to run the checks (the four CI commands, in order, with the "document only what you ran" rule), How to pick up an issue (good-first-issue label + docs/good-first-issues/, comment-before-claiming), Branch/PR conventions (`<type>/<short-desc>` branches, conventional commits), Code style (TS strict, eslint zero-warnings, zero-runtime-deps posture, provider specifics in packages/providers, no prompt/response logging, append-only event semantics), Definition of done (6-point checklist: 4 checks green, tests for new behavior + regression tests, docs updated, no secrets/data/node_modules, conventional commit + standalone PR, zero-cost local path intact).
+- `CONTRIBUTING.md` + `AGENTS.md` — corrected stale "tsx watch" reference: `npm run dev:api` is actually `npx tsc -b && node dist/index.js` (tsx not installed).
+
+**Tests/verification:**
+- `npm install` ✅, `npm run lint` ✅ (zero warnings), `npm run typecheck` ✅, `npm test` ✅ (43/43), `npm run build` ✅.
+- Ran every documented command end-to-end against a throwaway SQLite DB: started API with `AGENTOS_DEV_API_KEY`, `examples/register-and-report.js` (register → heartbeat → events) ✅, `SHAMAR_API_KEY=<key> node scripts/seed-demo.js` (4 agents, 52 backfilled + 12 recent events, idempotent) ✅, `/api/dashboard/summary` returned correct counts (5 agents, 29 events/24h) ✅.
+- `docker compose up` **not verifiable here** (no Docker in sandbox); CONTRIBUTING.md now says so explicitly instead of claiming it works.
+
+**Security self-review:** docs-only change; no secrets, no code, no new attack surface. `.env` (created for verification) is gitignored — confirmed `git status` clean of it.
+
+**Next logical task (sprint):** item 2 — README polish (30-second vision, demo link pending Antonio's launch-post gate). Sprint checklist then complete.
+
+## 2026-09-23 ~16:15 EDT — Follow-up: data/ gitignore fix (agent: antonio/loop)
+
+**Task:** cleanup — verification cycle accidentally created `apps/api/data/` (API started before `SQLITE_PATH` was set); `.gitignore`'s `/data/` only matched repo root, so it showed as untracked.
+
+**Changes:** `.gitignore` `/data/` → `data/` (any depth); removed the leftover local DB. Tree clean.
+
+**Next:** README polish (remaining sprint item).
+
+## 2026-09-23 ~16:20 EDT — IN PROGRESS: contributor-readiness sprint, cycle 3: README polish + stale-command fixes (agent: antonio/loop)
+
+## 2026-09-23 ~16:35 EDT — Contributor-readiness sprint, cycle 3: README polish + stale-command fixes (agent: antonio/loop)
+
+**Task selected:** P2 contributor-readiness — sprint item 2 (README polish) + item 5 follow-ups (fix stale commands found while verifying).
+
+**Changes:**
+- `README.md` — full polish: CI + Apache 2.0 badges; 30-second pitch (the problem, what Shamar is, 5 bullets); live demo link (https://shamar-site.asjames18.workers.dev/demo); 5-minute quickstart (npm path, every command re-verified this cycle); what-works-today; repo layout (**fixed**: apps/web is static HTML + nginx, was mislabeled Next.js); docs index; contributing; Apache 2.0 license.
+- `CONTRIBUTING.md` — real clone URL (was `<repo-url>` placeholder); corrected `npm run dev:api` description (one-shot build+run, not "rebuild on change"); added the `set -a && . ./.env && set +a` key-load step since the example client/seed script read the key from the environment, not from `.env` directly.
+- `scripts/seed-demo.js` — fixed misleading missing-key error message (said "pass it as argv[2]"; the key is argv[3]/env).
+- Notably NOT broken (redaction display artifact in my own tool output): seed usage header and CONTRIBUTING seed command were already correct (`SHAMAR_API_KEY=<your-dev-key> node scripts/seed-demo.js`).
+
+**Tests/verification:**
+- `npm run lint` ✅ zero warnings · `npm run typecheck` ✅ · `npm test` ✅ 43/43 · `npm run build` ✅ (before and after edits).
+- README quickstart E2E against throwaway SQLite: `npm run dev:api` ✅ (API up, summary 200), example client register→heartbeat→events ✅, seed script ✅ (52 backfilled + 12 recent, 5 agents / 29 events-24h), authenticated `curl .../api/dashboard/summary` ✅ returned real JSON. Also caught and fixed a stale command mid-cycle: the dashboard summary endpoint requires the `x-api-key` header (bare curl would 401).
+- `docker compose up` still **unverifiable here** (no Docker in sandbox); README + CONTRIBUTING both say so explicitly.
+
+**Security self-review:** docs-only + one error-string fix; no secrets, no code-behavior change, no new attack surface. Verification `.env` is gitignored (confirmed absent from `git status`).
+
+**Sprint status: contributor-readiness checklist COMPLETE** — CONTRIBUTING.md ✅, README ✅, issue templates ✅, good-first-issue drafts ✅, AGENTS.md + AGENT_START.md ✅, STATUS.md ✅, quickstart commands verified ✅. Next (per directive order): resume P3 — Demo polish pass → launch post (held until Antonio judges demo attractive) → Phase 2 real-daemon close-out.

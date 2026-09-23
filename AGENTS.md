@@ -34,7 +34,7 @@ The public landing + demo site is a **separate static Cloudflare Worker** (canne
 
 ```bash
 npm install              # install (Node >= 22)
-npm run dev:api          # run the API directly (apps/api, tsx watch)
+npm run dev:api          # build + run apps/api against local SQLite (rebuild on change)
 
 npm run lint             # eslint, zero warnings allowed
 npm run typecheck        # tsc project references
