@@ -1,0 +1,29 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm install
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - name: Check for leaked secrets
+        run: |
+          # Fail if anything that looks like a committed secret sneaks in
+          ! grep -rEi --exclude-dir=node_modules --exclude-dir=.git \
+            -e 'sk-(live|test)-[A-Za-z0-9]{10,}' \
+            -e 'xox[bap]-' \
+            -e 'AKIA[0-9A-Z]{16}' \
+            . || (echo 'possible secret committed' && exit 1)

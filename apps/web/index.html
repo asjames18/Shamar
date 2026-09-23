@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI Workforce Control Plane</title>
+<style>
+  :root { --bg:#0b1220; --panel:#111a2e; --line:#1e2a45; --txt:#e6edf3; --dim:#94a3b8; --accent:#38bdf8; --ok:#34d399; --warn:#fbbf24; --err:#f87171; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--txt); font:15px/1.5 system-ui,-apple-system,sans-serif; }
+  header { padding:20px 28px; border-bottom:1px solid var(--line); display:flex; justify-content:space-between; align-items:center; }
+  header h1 { margin:0; font-size:20px; letter-spacing:.3px; }
+  header h1 span { color:var(--accent); }
+  header p { margin:2px 0 0; color:var(--dim); font-size:13px; }
+  #key { background:var(--panel); border:1px solid var(--line); color:var(--txt); padding:8px 12px; border-radius:8px; width:280px; }
+  main { padding:24px 28px; max-width:1100px; margin:0 auto; }
+  .cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:14px; margin-bottom:26px; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:16px 18px; }
+  .card .n { font-size:30px; font-weight:700; }
+  .card .l { color:var(--dim); font-size:12px; text-transform:uppercase; letter-spacing:.6px; }
+  h2 { font-size:16px; margin:26px 0 12px; }
+  table { width:100%; border-collapse:collapse; background:var(--panel); border:1px solid var(--line); border-radius:12px; overflow:hidden; }
+  th, td { text-align:left; padding:10px 14px; border-bottom:1px solid var(--line); font-size:14px; }
+  th { color:var(--dim); font-size:12px; text-transform:uppercase; letter-spacing:.5px; }
+  tr:last-child td { border-bottom:0; }
+  .pill { display:inline-block; padding:2px 10px; border-radius:999px; font-size:12px; border:1px solid var(--line); }
+  .pill.active { color:var(--ok); border-color:var(--ok); }
+  .pill.paused { color:var(--warn); border-color:var(--warn); }
+  .pill.error { color:var(--err); border-color:var(--err); }
+  .pill.idle,.pill.retired { color:var(--dim); }
+  #err { color:var(--err); margin:12px 0; min-height:20px; }
+  code { background:#0a0f1c; padding:2px 6px; border-radius:6px; font-size:13px; }
+  .hint { color:var(--dim); font-size:13px; margin-top:18px; }
+  a.agent-link { color:var(--accent); text-decoration:none; cursor:pointer; font-weight:600; }
+  a.agent-link:hover { text-decoration:underline; }
+  .back { display:inline-block; margin-bottom:6px; color:var(--accent); cursor:pointer; text-decoration:none; }
+  .back:hover { text-decoration:underline; }
+  .kv { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:10px; margin:14px 0 4px; }
+  .kv div { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:10px 14px; font-size:14px; }
+  .kv .k { color:var(--dim); font-size:11px; text-transform:uppercase; letter-spacing:.5px; display:block; margin-bottom:2px; }
+  .timeline td:first-child { white-space:nowrap; color:var(--dim); }
+  .num { text-align:right; font-variant-numeric:tabular-nums; }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1><span>◈</span> AI Workforce Control Plane</h1>
+    <p>Mission control for your organization's AI agents — provider-neutral, local-first.</p>
+  </div>
+  <input id="key" type="password" placeholder="API key (x-api-key)" autocomplete="off">
+</header>
+<main>
+  <div id="err"></div>
+
+  <!-- List view -->
+  <div id="list-view">
+    <div class="cards" id="cards"></div>
+
+    <h2>Agents</h2>
+    <table>
+      <thead><tr><th>Name</th><th>Department</th><th>Model</th><th>Status</th><th>Last heartbeat</th></tr></thead>
+      <tbody id="agents"><tr><td colspan="5">—</td></tr></tbody>
+    </table>
+
+    <h2>Recent activity</h2>
+    <table>
+      <thead><tr><th>When</th><th>Event</th><th>Summary</th></tr></thead>
+      <tbody id="events"><tr><td colspan="3">—</td></tr></tbody>
+    </table>
+
+    <p class="hint">Tip: run <code>node examples/register-and-report.js</code> to register a demo agent and watch activity appear here. API key is read from <code>AGENTOS_DEV_API_KEY</code> or the field above. Click an agent's name for its detail page.</p>
+  </div>
+
+  <!-- Detail view -->
+  <div id="detail-view" style="display:none">
+    <a class="back" id="back-link">← Back to agents</a>
+    <div id="detail"></div>
+  </div>
+</main>
+<script>
+const keyInput = document.getElementById('key');
+keyInput.value = localStorage.getItem('cp-key') || '';
+keyInput.addEventListener('change', () => localStorage.setItem('cp-key', keyInput.value));
+
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const ago = iso => { if (!iso) return '—'; const s = Math.round((Date.now() - new Date(iso)) / 1000);
+  if (s < 60) return s + 's ago'; if (s < 3600) return Math.floor(s/60) + 'm ago';
+  if (s < 86400) return Math.floor(s/3600) + 'h ago'; return Math.floor(s/86400) + 'd ago'; };
+const fmtDur = ms => { if (ms == null) return '—'; if (ms < 1000) return ms + 'ms';
+  if (ms < 60000) return (ms/1000).toFixed(1) + 's'; return (ms/60000).toFixed(1) + 'm'; };
+const fmtNum = n => n == null ? '—' : Number(n).toLocaleString();
+
+let detailId = null; // when set, the detail view is active and auto-refreshes
+
+async function get(path) {
+  const r = await fetch(path, { headers: { 'x-api-key': keyInput.value } });
+  if (r.status === 401) throw new Error('unauthorized — enter the API key from your .env (AGENTOS_DEV_API_KEY)');
+  if (!r.ok) throw new Error('request failed: ' + r.status);
+  return r.json();
+}
+
+async function refreshList() {
+  const [sum, agents] = await Promise.all([get('/api/dashboard/summary'), get('/api/agents')]);
+  document.getElementById('cards').innerHTML = [
+    [sum.total_agents, 'Total agents'], [sum.active_agents, 'Active'],
+    [sum.events_last_24h, 'Events (24h)'],
+    [sum.agents_by_status.error || 0, 'Failed agents'],
+  ].map(([n, l]) => `<div class="card"><div class="n">${n}</div><div class="l">${l}</div></div>`).join('');
+
+  const byId = Object.fromEntries(agents.agents.map(a => [a.id, a.name]));
+  document.getElementById('agents').innerHTML = agents.agents.map(a => `
+    <tr><td><a class="agent-link" data-id="${esc(a.id)}">${esc(a.name)}</a><br><span style="color:var(--dim)">${esc(a.description)}</span></td>
+    <td>${esc(a.department)}</td><td>${esc(a.model || '—')}</td>
+    <td><span class="pill ${esc(a.status)}">${esc(a.status)}</span></td>
+    <td>${ago(a.last_heartbeat_at)}</td></tr>`).join('') || '<tr><td colspan="5">No agents yet.</td></tr>';
+
+  document.getElementById('events').innerHTML = sum.recent_events.map(e => `
+    <tr><td>${ago(e.occurred_at)}</td><td><code>${esc(e.type)}</code></td>
+    <td><strong>${esc(byId[e.agent_id] || 'agent')}</strong> — ${esc(e.summary)}</td></tr>`).join('')
+    || '<tr><td colspan="3">No events yet.</td></tr>';
+
+  document.querySelectorAll('.agent-link').forEach(el =>
+    el.addEventListener('click', () => showDetail(el.dataset.id)));
+}
+
+async function refreshDetail() {
+  const d = await get(`/api/agents/${encodeURIComponent(detailId)}/detail`);
+  const a = d.agent, u = d.usage;
+  const usageCards = [
+    [u.events_total, 'Events (total)'], [u.events_last_24h, 'Events (24h)'],
+    [u.model_calls, 'Model calls'], [u.tool_calls, 'Tool calls'],
+    [u.tasks_completed, 'Tasks completed'], [u.tasks_failed, 'Tasks failed'],
+    [fmtNum(u.tokens_in_total), 'Tokens in'], [fmtNum(u.tokens_out_total), 'Tokens out'],
+  ].map(([n, l]) => `<div class="card"><div class="n">${n}</div><div class="l">${l}</div></div>`).join('');
+
+  const identity = [
+    ['Owner', a.owner || '—'], ['Department', a.department || '—'],
+    ['Provider', a.provider || '—'], ['Model', a.model || '—'],
+    ['Autonomy', 'L' + a.autonomy_level], ['Budget (monthly)', a.budget_monthly_usd != null ? '$' + a.budget_monthly_usd : '—'],
+    ['Tools', (a.tools || []).join(', ') || '—'], ['Permissions', (a.permissions || []).join(', ') || '—'],
+  ].map(([k, v]) => `<div><span class="k">${esc(k)}</span>${esc(v)}</div>`).join('');
+
+  const timeline = d.recent_events.map(e => `
+    <tr><td>${ago(e.occurred_at)}</td><td><code>${esc(e.type)}</code></td>
+    <td>${esc(e.summary)}</td><td class="num">${fmtNum(e.tokens_in)}</td>
+    <td class="num">${fmtNum(e.tokens_out)}</td><td class="num">${fmtDur(e.duration_ms)}</td></tr>`
+  ).join('') || '<tr><td colspan="6">No events yet.</td></tr>';
+
+  document.getElementById('detail').innerHTML = `
+    <h2 style="margin-top:8px">${esc(a.name)} <span class="pill ${esc(a.status)}">${esc(a.status)}</span></h2>
+    <p style="color:var(--dim)">${esc(a.description) || ''}</p>
+    <p><strong>Last check-in:</strong> ${ago(d.last_check_in)}${d.last_check_in ? ` <span style="color:var(--dim)">(${esc(d.last_check_in)})</span>` : ''}</p>
+    <h2>Usage</h2>
+    <div class="cards">${usageCards}</div>
+    <h2>Identity</h2>
+    <div class="kv">${identity}</div>
+    <h2>Activity timeline</h2>
+    <table class="timeline">
+      <thead><tr><th>When</th><th>Event</th><th>Summary</th><th class="num">Tokens in</th><th class="num">Tokens out</th><th class="num">Duration</th></tr></thead>
+      <tbody>${timeline}</tbody>
+    </table>
+    <p class="hint">Costs are shown only when reported by a provider — the control plane never estimates billing numbers.</p>`;
+}
+
+async function showDetail(id) {
+  detailId = id;
+  document.getElementById('list-view').style.display = 'none';
+  document.getElementById('detail-view').style.display = '';
+  await refresh();
+}
+
+document.getElementById('back-link').addEventListener('click', () => {
+  detailId = null;
+  document.getElementById('detail-view').style.display = 'none';
+  document.getElementById('list-view').style.display = '';
+  refresh();
+});
+
+async function refresh() {
+  try {
+    document.getElementById('err').textContent = '';
+    if (detailId) await refreshDetail(); else await refreshList();
+  } catch (e) {
+    if (detailId && /404|not found/i.test(e.message)) {
+      detailId = null;
+      document.getElementById('detail-view').style.display = 'none';
+      document.getElementById('list-view').style.display = '';
+      await refreshList();
+    } else {
+      document.getElementById('err').textContent = e.message;
+    }
+  }
+}
+refresh();
+setInterval(refresh, 5000);
+</script>
+</body>
+</html>

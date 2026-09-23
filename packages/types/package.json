@@ -1,0 +1,10 @@
+{
+  "description": "Shared TypeScript types for the AI workforce control plane. Single source of truth (ADR-0003, ADR-0004).",
+  "license": "Apache-2.0",
+  "main": "dist/index.js",
+  "name": "@control-plane/types",
+  "private": true,
+  "type": "commonjs",
+  "types": "dist/index.d.ts",
+  "version": "0.1.0"
+}

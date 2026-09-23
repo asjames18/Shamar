@@ -1,0 +1,44 @@
+# Secrets — never commit these
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+id_rsa*
+credentials*.json
+secrets/
+
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Build output
+dist/
+*.tsbuildinfo
+build/
+.next/
+out/
+
+# Data (local SQLite lives here in dev)
+/data/
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+
+# Test artifacts
+coverage/
+.nyc_output/

@@ -1,0 +1,7 @@
+{
+  "description": "Dashboard web UI for the AI workforce control plane.",
+  "license": "Apache-2.0",
+  "name": "@control-plane/web",
+  "private": true,
+  "version": "0.1.0"
+}
