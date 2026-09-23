@@ -2,6 +2,15 @@
 
 Derived from the project charter (§48–§51). Each phase ends with something working and testable. No phase starts before the previous one is stable.
 
+## UI/UX track — runs alongside every phase (Antonio's directive 2026-09-23)
+
+People judge a product by how it looks *and* by whether it works. So every phase ships with its UI brought up to a modern standard — not "functionality first, pretty later." As each phase's features land, their screens get the modern/responsive treatment in the same cycle.
+
+- **Mobile-first, responsive everywhere.** Design for the phone first — most people live on mobile — then scale up cleanly to tablet and desktop. No cramped tables on small screens, no wasted empty space on big ones.
+- **Modern and attractive.** Clean, consistent visual design people actually want to look at: a shared design system (colors, type, spacing), polished states (loading, empty, error), subtle motion where it earns its place.
+- **Works the right way too.** Looking nice is table stakes — forms validate honestly, errors say what went wrong, statuses are truthful, nothing silently fails. If it's broken, fix function before polish; if it works, make it beautiful.
+- Applies to the dashboard/product UI first; the public demo + landing site follows the same standard.
+
 ## Where we are (2026-09-23)
 
 - **Done:** Phase 0 (research + foundation). Phase 1 vertical slice — agent registry, event ingestion, dashboard, agent detail page, TypeScript SDK, demo seed script, dashboard registration UI — exit criteria met 2026-09-23. Phase 2 Ollama adapter (model discovery, validation, invocation) — verified against a mock daemon; one real-daemon run still pending.
@@ -78,4 +87,4 @@ Marketplace, advanced compliance packs, enterprise SSO, long-term audit retentio
 
 ## Priority Algorithm (from charter §43)
 
-P0 security vulnerability → P1 broken build → P2 MVP blockers → P3 architecture problems → P4 test coverage → P5 DX → P6 docs → P7 new MVP features → P8 UI polish → P9 future experiments. No UI polish while core functionality is broken.
+P0 security vulnerability → P1 broken build → P2 MVP blockers → P3 architecture problems → P4 test coverage → P5 DX → P6 docs → P7 new MVP features → P8 UI polish → P9 future experiments. No UI polish while core functionality is broken. *(Note 2026-09-23: the UI/UX track above supersedes "P8 UI polish" as a standing track — each phase ships with modern, mobile-first UI in the same cycle; broken functionality is still fixed before its polish.)*
