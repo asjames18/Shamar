@@ -260,3 +260,38 @@ Scope: ~/workspace/shamar-site/demo.html + landing.html — simulated live event
 **Result:** no code change required. Demo-polish pass remains staged locally, **not deployed**, awaiting Antonio's verdict — launch post still HELD per directive.
 
 **Next:** Antonio's demo verdict (gate for launch post + redeploy); otherwise Phase 3 cloud provider adapters per directive order.
+
+## 2026-09-23 ~17:45 EDT — IN PROGRESS: Phase 3, cycle 1: OpenRouter BYOK adapter (agent: antonio/loop)
+
+Scope: packages/providers — OpenRouterAdapter (validateCredentials via documented /api/v1/auth/key, listModels via /api/v1/models incl. documented per-token pricing, invokeModel via /api/v1/chat/completions, estimateCost only from documented pricing, key from OPENROUTER_API_KEY env / constructor), wiring in createProviderAdapter, unit tests against a mock HTTP server. No live key needed.
+
+## 2026-09-23 ~18:00 EDT — Phase 3, cycle 1: OpenRouter BYOK adapter (agent: antonio/loop)
+
+**Task selected:** P2 MVP blocker — Phase 3 first cloud adapter (OpenRouter; cleanest documented auth). Demo-polish is deployed awaiting Antonio's verdict; Phase 2 real-daemon needs his machine — OpenRouter was the next actionable item per the directive.
+
+**Changes:**
+- `packages/providers/src/openrouter.ts` (new) — `OpenRouterAdapter` implementing `ProviderAdapter`, documented OpenRouter API only:
+  - `validateCredentials()` → free `GET /api/v1/auth/key` (no model call, costs nothing); key from constructor or `OPENROUTER_API_KEY` env (never logged, stored, or echoed — only in the Authorization header).
+  - `listModels()` → public `GET /api/v1/models`; carries id/name/context_window; caches documented per-token USD pricing (process-wide, since the API builds a fresh adapter per request).
+  - `invokeModel()` → `POST /api/v1/chat/completions`; real token counts from `usage`, latency, model identity. Prompt/response bodies never stored (server-side, unchanged).
+  - `estimateCost()` — computed ONLY from the documented pricing cached from `/models` for the last-invoked model; null until pricing is known — never guessed (ADR-0003 null-cost rule).
+- `packages/providers/src/index.ts` — `createProviderAdapter('openrouter')` wired; `openai`/`anthropic`/`gemini` still honest 501s.
+- `packages/providers/src/test/openrouter.test.ts` (new) — 8 tests against a mock OpenRouter HTTP server: factory wiring, listModels, validate ok/rejected/missing-key, invoke usage capture, estimateCost null-until-pricing-known then documented-pricing math, key-required rejection.
+- Server unchanged — existing `/api/providers/:id/{models,validate,invoke}` endpoints just work.
+- Docs: `ROADMAP.md` (Phase 3 — OpenRouter checked off, exit-criteria progress), `docs/STATUS.md` (Next queue), `README.md` (BYOK wording).
+
+**Tests/verification:**
+- `npm run lint` ✅ zero warnings · `npm run typecheck` ✅ · `npm test` ✅ **51/51 pass** (43 existing + 8 new) · `npm run build` ✅.
+- E2E against live API + mock OpenRouter (localhost): register openrouter provider → `POST /validate` → `{ok:true, message:"OpenRouter API key valid (e2e-key)", status:"healthy"}` ✅ → `GET /models` ✅ → `POST /invoke` → text + real usage `{tokens_in:50, tokens_out:25}` + `model.called` event with `cost_usd=0.0001` (computed from documented pricing: 50×1e-6 + 25×2e-6) ✅. Scratch DB + scripts deleted.
+- Also fixed mid-cycle: pricing cache moved from per-instance to process-wide after E2E showed cost always null (server builds a fresh adapter per request).
+
+**Security self-review:** no secrets touched — tests use a fake key; key only ever placed in the `Authorization` header; no console logging of the key; validation never echoes key material; provider error messages come from OpenRouter's own JSON, not our key. No new attack surface (same three endpoints, now real).
+
+**Risks / open items:**
+- Pricing cache is as fresh as the last `/models` call in the process — documented in code; acceptable for an estimate, never a bill.
+- Not yet run against a real OpenRouter key — needs Antonio's BYOK key (he sets `OPENROUTER_API_KEY` in `.env`, never committed). Also verifies documented pricing shape for a real model feed.
+- No live network dependency: tests are mock-server only; adapter throws honest errors when OpenRouter is unreachable.
+
+**Committed:** `24dc7ad` `feat(providers): add OpenRouter BYOK adapter (Phase 3, first cloud adapter)` — local only (Mosheh syncs to GitHub).
+
+**Next:** next cloud adapter one at a time (OpenAI / Anthropic / Gemini BYOK) — or live OpenRouter key check if Antonio supplies a key.

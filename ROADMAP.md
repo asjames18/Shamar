@@ -62,6 +62,9 @@ One documented adapter at a time, using only official interfaces. Start with whi
 
 **Exit criteria:** at least one BYOK cloud provider fully working: validate → discover → invoke → usage/cost recorded.
 
+- [x] **OpenRouter (2026-09-23)** — first BYOK cloud adapter: `OpenRouterAdapter` in `packages/providers/src/openrouter.ts` using only documented APIs (`GET /api/v1/auth/key` for free key validation, `GET /api/v1/models` for discovery incl. documented per-token pricing, `POST /api/v1/chat/completions` for invoke). Key from constructor or `OPENROUTER_API_KEY` env (never logged/stored/echoed); `estimateCost` computed from documented pricing only, null until a `/models` call populates the process cache — never guessed. Wired through existing `/api/providers/:id/{models,validate,invoke}` endpoints with zero server changes. Tests: 8 new unit tests (mock OpenRouter server) — 51/51 pass; E2E against a live API + mock OpenRouter confirmed validate → discover → invoke → `model.called` event with real usage and cost_usd recorded. **Not yet run against a real OpenRouter key** — needs Antonio's BYOK key for the live check.
+- [ ] Next adapter (OpenAI / Anthropic / Gemini BYOK) — one at a time per directive.
+
 ## Phase 4 — Governance Foundations
 
 - Agent identity model (agent_id, org, owner, permissions, spending authority).

@@ -17,7 +17,7 @@ An open-source control plane for AI agents:
 
 - **Agent registry** — identity, owner, model, provider, tools, and budget for every agent.
 - **Event log** — append-only record of what agents actually do (`agent.started`, `model.called`, `task.completed`…).
-- **Provider connections** — local Ollama for free, plus OpenAI/Anthropic/Gemini BYOK. Documented APIs only — no scraping, no session hacks.
+- **Provider connections** — local Ollama for free, plus OpenRouter BYOK (key in `OPENROUTER_API_KEY`); OpenAI/Anthropic/Gemini next. Documented APIs only — no scraping, no session hacks.
 - **Dashboard** — total/active agents, recent activity, usage and cost.
 - **REST API + SDK** — external agents register, heartbeat, and report; any framework can plug in.
 
@@ -25,7 +25,7 @@ An open-source control plane for AI agents:
 
 ## Status
 
-Phase 0 (research + foundation) ✅ · Phase 1 vertical slice ✅ · Phase 2 Ollama adapter ✅ against a mock daemon (one real-daemon run still pending). Full picture: [ROADMAP.md](ROADMAP.md) · [docs/STATUS.md](docs/STATUS.md).
+Phase 0 (research + foundation) ✅ · Phase 1 vertical slice ✅ · Phase 2 Ollama adapter ✅ against a mock daemon (one real-daemon run still pending) · Phase 3 started — OpenRouter BYOK adapter ✅ against a mock (live check needs a real key). Full picture: [ROADMAP.md](ROADMAP.md) · [docs/STATUS.md](docs/STATUS.md).
 
 ## Quickstart — 5 minutes
 
@@ -73,7 +73,7 @@ Prefer Docker? `docker compose up` gives the full stack — API on `:4000`, web 
 /apps/api        REST API (Node + TypeScript, zero runtime deps) — agents, events, providers, dashboard
 /apps/web        Dashboard UI (static HTML + nginx in Docker)
 /packages/types  Shared TS types: Agent, AgentEvent, Provider, ProviderAdapter
-/packages/providers  Provider adapters — Ollama implemented; cloud adapters planned
+/packages/providers  Provider adapters — Ollama + OpenRouter BYOK implemented; more cloud adapters planned
 /packages/sdk    TypeScript SDK — register/heartbeat/event helpers (zero deps)
 /packages/core, /packages/telemetry  Reserved for future extraction; currently empty
 /docs            Vision, roadmap, architecture, ADRs, competitive landscape
