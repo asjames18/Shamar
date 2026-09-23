@@ -66,6 +66,7 @@ The seed script is idempotent (reuses agents by name) and leaves a fresh round o
 - [docs/adr/](docs/adr/) — architecture decision records
 - [docs/competitive-landscape.md](docs/competitive-landscape.md) — what's out there, gaps we exploit
 - [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md)
+- [CONTRIBUTORS.md](CONTRIBUTORS.md) — who builds and maintains Shamar
 
 ## Principles
 
@@ -76,7 +77,7 @@ The seed script is idempotent (reuses agents by name) and leaves a fresh round o
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). Small, tested, documented PRs welcome.
+See [CONTRIBUTING.md](CONTRIBUTING.md). Small, tested, documented PRs welcome. See [CONTRIBUTORS.md](CONTRIBUTORS.md) for who is credited.
 
 ## License
 

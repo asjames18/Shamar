@@ -2,6 +2,21 @@
 
 Concise record of each work cycle: timestamp, task, changes, tests, risks, next task.
 
+## 2026-09-23 ~15:12 EDT — Docs: Justin Carter contributor credit
+
+**Task:** Credit Justin Carter (@justincarterdev) as a normal contributor in public docs.
+
+**Changes:** CONTRIBUTORS.md lists Justin Carter with GitHub link only; removed prior special-role wording from this PR's docs.
+
+**Next:** Antonio merge of PR #1 after review.
+
+## 2026-09-23 ~15:00 EDT — Docs: CONTRIBUTORS credit
+
+**Task:** Add public CONTRIBUTORS.md listing Antonio (@asjames18) as creator/maintainer and Justin Carter (@justincarterdev) as contributor, plus README link.
+
+**Changes:** CONTRIBUTORS.md; README Docs + Contributing links; this log note.
+
+**Next:** none for this docs PR.
 ## 2026-09-23 12:45–13:00 EDT — Phase 0: Research + Foundation (cycle 1)
 
 **Task selected:** Charter §57 first assignment — landscape research, architecture proposal, foundation docs, MVP skeleton.
