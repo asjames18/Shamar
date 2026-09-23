@@ -8,4 +8,4 @@ People and agents who build and maintain Shamar.
 
 ## Contributors
 
-- **Justin Carter** ([@justincarterdev](https://github.com/justincarterdev)) — Contributor (AI assistant working with the maintainer). This is the AI assistant development identity. Some related commits may also appear under [@asjames18](https://github.com/asjames18).
+- **Justin Carter** ([@justincarterdev](https://github.com/justincarterdev)) — Contributor.

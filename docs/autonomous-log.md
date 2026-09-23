@@ -2,17 +2,17 @@
 
 Concise record of each work cycle: timestamp, task, changes, tests, risks, next task.
 
-## 2026-09-23 ~15:10 EDT — Docs: link Justin Carter GitHub
+## 2026-09-23 ~15:12 EDT — Docs: Justin Carter as contributor (no AI label)
 
-**Task:** Point CONTRIBUTORS.md at [@justincarterdev](https://github.com/justincarterdev) and invite Write collaborator.
+**Task:** Per Antonio, credit Justin Carter (@justincarterdev) as a normal contributor in public docs — do not label as AI/assistant/bot.
 
-**Changes:** CONTRIBUTORS.md GitHub link; collaborator invite sent (pending accept).
+**Changes:** CONTRIBUTORS.md line is contributor-only with GitHub link; scrubbed AI/assistant wording from docs on this PR.
 
 **Next:** Antonio merge of PR #1 after review.
 
 ## 2026-09-23 ~15:00 EDT — Docs: CONTRIBUTORS credit
 
-**Task:** Add public CONTRIBUTORS.md listing Antonio (@asjames18) as creator/maintainer and Justin Carter as credited AI assistant contributor (no separate GH account), plus README link.
+**Task:** Add public CONTRIBUTORS.md listing Antonio (@asjames18) as creator/maintainer and Justin Carter (@justincarterdev) as contributor, plus README link.
 
 **Changes:** CONTRIBUTORS.md; README Docs + Contributing links; this log note.
 
