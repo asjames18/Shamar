@@ -2,6 +2,13 @@
 
 Concise record of each work cycle: timestamp, task, changes, tests, risks, next task.
 
+## 2026-09-23 ~15:00 EDT — Docs: CONTRIBUTORS credit
+
+**Task:** Add public CONTRIBUTORS.md listing Antonio (@asjames18) as creator/maintainer and Justin Carter as credited AI assistant contributor (no separate GH account), plus README link.
+
+**Changes:** CONTRIBUTORS.md; README Docs + Contributing links; this log note.
+
+**Next:** none for this docs PR.
 ## 2026-09-23 12:45–13:00 EDT — Phase 0: Research + Foundation (cycle 1)
 
 **Task selected:** Charter §57 first assignment — landscape research, architecture proposal, foundation docs, MVP skeleton.
