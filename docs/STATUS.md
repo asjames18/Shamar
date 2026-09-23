@@ -10,6 +10,8 @@ _Last updated: 2026-09-23 ~18:35 EDT.
 
 **Phase 3 cloud adapters COMPLETE (2026-09-23 ~19:30)** — all four BYOK adapters (OpenRouter, Anthropic, OpenAI, Gemini) working: validate → discover → invoke → usage/cost recorded, honest-501 fallback retired. **Pending:** live checks against Antonio's real BYOK keys for all four; Phase 2 real-daemon Ollama run (his machine).
 
+**Phase 4 governance — first slice done (2026-09-23 ~20:00)** — human approval workflow live: `POST /api/approvals`, `GET /api/approvals?agent_id=&status=`, `POST /api/approvals/:id/grant|deny`; `approval.requested/granted/denied` events in the audit trail; double-decide fails closed; `pending_approvals` on dashboard summary + agent detail; web dashboard card + per-agent Grant/Deny buttons. Tests 75/75. Remaining Phase 4: autonomy-level policy rules, budgets with warnings/throttling, `policy.blocked` enforcement.
+
 ## Recently done
 
 **Contributor-readiness sprint — ✅ COMPLETE 2026-09-23 ~16:35** (directive from Antonio): repo is ready for outside contributors.
@@ -45,4 +47,4 @@ cp .env.example .env && docker compose up   # api :4000, web :3000
 
 ## Health
 
-Tests 72/72 · lint clean · typecheck clean (verified 2026-09-23 ~19:35).
+Tests 75/75 · lint clean · typecheck clean (verified 2026-09-23 ~20:05).

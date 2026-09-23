@@ -10,7 +10,7 @@ import { createServer, IncomingMessage, ServerResponse } from 'node:http';
 import { scryptSync, timingSafeEqual } from 'node:crypto';
 import { openStorage, Storage, ValidationError } from './store.js';
 import { adapterFor, NotImplementedError } from './providers.js';
-import type { InvokeRequest } from '@control-plane/types';
+import type { InvokeRequest, ApprovalStatus } from '@control-plane/types';
 
 const PORT = Number(process.env.API_PORT ?? 4000);
 
@@ -235,6 +235,49 @@ export function createApp(storage: Storage) {
           model: result.model,
           event,
         });
+      }
+
+      // --- approvals (Phase 4: human-in-the-loop governance) --------------
+      if (path === '/api/approvals' && method === 'POST') {
+        const body = (await readJson(req)) as {
+          agent_id?: unknown;
+          title?: unknown;
+          detail?: unknown;
+          requested_by?: unknown;
+        };
+        const input = {
+          agent_id: body.agent_id,
+          title: body.title,
+          ...(typeof body.detail === 'string' ? { detail: body.detail } : {}),
+          ...(body.requested_by === 'agent' || body.requested_by === 'human' || body.requested_by === 'system'
+            ? { requested_by: body.requested_by }
+            : {}),
+        };
+        const approval = storage.requestApproval(input as never);
+        return send(res, 201, { approval });
+      }
+      if (path === '/api/approvals' && method === 'GET') {
+        return send(res, 200, {
+          approvals: storage.listApprovals({
+            agent_id: url.searchParams.get('agent_id') ?? undefined,
+            // Validated (and 400-rejected) inside listApprovals.
+            status: (url.searchParams.get('status') ?? undefined) as ApprovalStatus | undefined,
+          }),
+        });
+      }
+      const decisionMatch = path.match(/^\/api\/approvals\/([^/]+)\/(grant|deny)$/);
+      if (decisionMatch && method === 'POST') {
+        const id = decodeURIComponent(decisionMatch[1]);
+        const body = (await readJson(req)) as { decided_by?: unknown; reason?: unknown };
+        if (typeof body.decided_by !== 'string' || !body.decided_by.trim()) {
+          throw new ValidationError('decided_by is required — record which human decided');
+        }
+        const approval = storage.decideApproval(id, {
+          decision: (decisionMatch[2] === 'grant' ? 'granted' : 'denied') as 'granted' | 'denied',
+          decided_by: body.decided_by,
+          ...(typeof body.reason === 'string' && body.reason ? { reason: body.reason } : {}),
+        });
+        return approval ? send(res, 200, { approval }) : send(res, 404, { error: 'approval request not found' });
       }
 
       // --- dashboard ----------------------------------------------------

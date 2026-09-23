@@ -403,3 +403,26 @@ Scope: packages/providers — GeminiAdapter (validateCredentials + listModels vi
 **Committed:** `e18037e feat(providers): add Gemini BYOK adapter (Phase 3, fourth and final cloud adapter)` — local only (Mosheh syncs to GitHub).
 
 **Next:** Phase 3 exit criteria met — next loop should pick the next MVP target from the directive order (e.g., Docker Compose validation needs a Docker machine — blocked in sandbox; docs REST API for external agents already exists — consider Antonio's verdict on the demo, live key checks, or Phase 4 governance foundations).
+
+## 2026-09-23 ~19:45 EDT — IN PROGRESS: Phase 4, cycle 1: human approval workflow (agent: antonio/loop)
+
+Scope: first Phase 4 slice — approval request/grant/deny as a first-class API. `approvals` table + `ApprovalRequest` types; storage `requestApproval`/`getApproval`/`listApprovals`/`decideApproval` (decide appends approval.granted/denied events server-side, request appends approval.requested; double-decide fails closed with ValidationError); routes POST /api/approvals, GET /api/approvals?agent_id=&status=, POST /api/approvals/:id/grant, POST /api/approvals/:id/deny; `pending_approvals` count on dashboard summary + pending approvals list on agent detail; web dashboard shows pending-approval card + per-agent pending list with grant/deny buttons. Tests: API-level coverage of request/grant/deny flows, validation errors, event trail. No SDK changes this cycle.
+
+## 2026-09-23 ~20:05 EDT — Phase 4, cycle 1: human approval workflow (agent: antonio/loop) — COMPLETE
+
+**Task selected:** P8 new MVP feature — Phase 4 governance foundations, first slice (all MVP targets done except Antonio-blocked items; approval workflow is the Phase 4 bullet that stands alone).
+
+**Changes:**
+- `packages/types/src/index.ts` — `ApprovalRequest`/`ApprovalInput`/`ApprovalDecisionInput`/`ApprovalStatus` types; `DashboardSummary.pending_approvals` count; `AgentDetail.pending_approvals` list.
+- `apps/api/src/store.ts` — `approvals` table (id, agent_id, title, detail, status, requested_by, decided_by, requested_at, decided_at; FK cascade on agent delete; indexes on status + agent). Storage methods: `requestApproval` (validates agent + title, emits `approval.requested`), `getApproval`, `listApprovals` (validates status filter → 400 on bogus), `decideApproval` (404 unknown; 400 double-decide — decisions are final; emits `approval.granted`/`denied` with decided_by + optional reason).
+- `apps/api/src/server.ts` — `POST /api/approvals` → 201; `GET /api/approvals?agent_id=&status=`; `POST /api/approvals/:id/grant|deny` (decided_by required → 400; unknown id → 404; double-decide → 400). All behind the same API-key gate.
+- `apps/web/index.html` — dashboard "Pending approvals" card + global pending list (agent link, title, requested-ago, requested-by); agent detail shows pending requests with Grant/Deny buttons (decider name via prompt, recorded in the audit trail); honest empty states.
+- Tests: 3 new API tests (request→grant flow + event trail, deny flow, validation fails closed) — **75/75 pass**.
+
+**Verification:** `npm run lint` ✅ zero warnings · `npm run typecheck` ✅ (fixed a status-param cast) · `npm test` ✅ 75/75 · `npm run build` ✅. E2E on live API + scratch SQLite: request → 201 pending → detail/summary show it → grant → 200 granted with decided_by → `approval.granted` event with reason in data ✅. Fixed one real bug found by tests: grant/deny route passed URL segment "grant"/"deny" to the store instead of "granted"/"denied". Scratch DB deleted.
+
+**Security self-review:** no secrets touched; same auth gate as all /api routes; prompt/response bodies untouched; no new persistent sensitive data (decided_by is human-declared). Fail-closed on every invalid transition. Known limitation: v0.1's single shared API key means the API can't prove the granter is human — the trail records decided_by as declared; per-human auth is a follow-up.
+
+**Committed:** `981fe8c feat(approvals): human-in-the-loop approval request/grant/deny (Phase 4 first slice)` — local only (Mosheh syncs to GitHub).
+
+**Next:** Phase 4 remaining — autonomy-level policy rules, budgets with warnings/throttling, `policy.blocked` enforcement. (Demo verdict, live key checks, and Phase 2 real-daemon still need Antonio.)

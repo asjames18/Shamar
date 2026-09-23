@@ -115,6 +115,46 @@ export interface AgentEventInput {
   duration_ms?: number | null;
 }
 
+// ---------------------------------------------------------------- Approvals
+
+/**
+ * Human-in-the-loop approval requests (Phase 4 governance).
+ * An agent (or a human) requests approval for a sensitive action; a human
+ * grants or denies it. Every transition is recorded in the event trail
+ * (approval.requested / approval.granted / approval.denied). A decided
+ * request can never be undecided or decided twice — fail closed.
+ */
+export type ApprovalStatus = 'pending' | 'granted' | 'denied';
+
+export interface ApprovalRequest {
+  id: string;
+  agent_id: string;
+  /** Short title for the request, e.g. "Send invoice to Acme Corp". */
+  title: string;
+  /** Free-form detail: what the agent wants to do and why. */
+  detail: string;
+  status: ApprovalStatus;
+  requested_by: EventActor;
+  /** Identifier of the human who decided, e.g. an email. Null while pending. */
+  decided_by: string | null;
+  requested_at: string;
+  decided_at: string | null;
+}
+
+export interface ApprovalInput {
+  agent_id: string;
+  title: string;
+  detail?: string;
+  requested_by?: EventActor;
+}
+
+export interface ApprovalDecisionInput {
+  decision: 'granted' | 'denied';
+  /** Identifier of the deciding human, e.g. an email. */
+  decided_by: string;
+  reason?: string;
+}
+
 // ---------------------------------------------------------------- Providers
 
 export type ProviderKind =
@@ -198,6 +238,8 @@ export interface DashboardSummary {
   active_agents: number;
   agents_by_status: Record<AgentStatus, number>;
   events_last_24h: number;
+  /** Approval requests still waiting on a human decision. */
+  pending_approvals: number;
   recent_events: Array<Pick<AgentEvent, 'id' | 'agent_id' | 'type' | 'occurred_at' | 'summary'>>;
 }
 
@@ -225,7 +267,7 @@ export interface AgentUsage {
   last_event_at: string | null;
 }
 
-/** Agent detail view payload: identity + usage + activity timeline. */
+/** Agent detail view payload: identity + usage + activity timeline + pending approvals. */
 export interface AgentDetail {
   agent: Agent;
   /** Convenience alias for agent.last_heartbeat_at. */
@@ -233,4 +275,6 @@ export interface AgentDetail {
   usage: AgentUsage;
   /** Activity timeline, newest first. */
   recent_events: AgentEvent[];
+  /** Approval requests still waiting on a human decision, newest first. */
+  pending_approvals: ApprovalRequest[];
 }

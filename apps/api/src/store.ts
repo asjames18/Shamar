@@ -18,6 +18,10 @@ import type {
   AgentEventType,
   AgentInput,
   AgentStatus,
+  ApprovalDecisionInput,
+  ApprovalInput,
+  ApprovalRequest,
+  ApprovalStatus,
   DashboardSummary,
   EventActor,
   Provider,
@@ -61,6 +65,17 @@ export interface Storage {
   createProvider(input: ProviderInput): Provider;
   /** Record a health-check outcome; updates status + last_health_check. */
   setProviderStatus(id: string, status: Provider['status']): Provider | null;
+  // approvals (Phase 4: human-in-the-loop governance)
+  /** Record an approval request; emits approval.requested. */
+  requestApproval(input: ApprovalInput): ApprovalRequest;
+  getApproval(id: string): ApprovalRequest | null;
+  listApprovals(opts: { agent_id?: string; status?: ApprovalStatus }): ApprovalRequest[];
+  /**
+   * Grant or deny a pending request; emits approval.granted/approval.denied.
+   * Returns null when the request does not exist; throws ValidationError when
+   * it was already decided (fail closed — no un-deciding, no double-deciding).
+   */
+  decideApproval(id: string, decision: ApprovalDecisionInput): ApprovalRequest | null;
   // dashboard
   dashboardSummary(): DashboardSummary;
   close(): void;
@@ -110,6 +125,19 @@ CREATE TABLE IF NOT EXISTS providers (
   last_health_check TEXT,
   created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS approvals (
+  id TEXT PRIMARY KEY,
+  agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+  title TEXT NOT NULL,
+  detail TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'pending',
+  requested_by TEXT NOT NULL DEFAULT 'agent',
+  decided_by TEXT,
+  requested_at TEXT NOT NULL,
+  decided_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_approvals_status ON approvals(status, requested_at DESC);
+CREATE INDEX IF NOT EXISTS idx_approvals_agent ON approvals(agent_id, status);
 `;
 
 const now = () => new Date().toISOString();
@@ -151,6 +179,23 @@ function rowToEvent(r: Record<string, unknown>): AgentEvent {
     duration_ms: (r.duration_ms as number) ?? null,
   };
 }
+
+function rowToApproval(r: Record<string, unknown>): ApprovalRequest {
+  return {
+    id: r.id as string,
+    agent_id: r.agent_id as string,
+    title: r.title as string,
+    detail: r.detail as string,
+    status: r.status as ApprovalStatus,
+    requested_by: r.requested_by as EventActor,
+    decided_by: (r.decided_by as string) ?? null,
+    requested_at: r.requested_at as string,
+    decided_at: (r.decided_at as string) ?? null,
+  };
+}
+
+const VALID_ACTORS: EventActor[] = ['agent', 'human', 'system'];
+const VALID_APPROVAL_STATUSES: ApprovalStatus[] = ['pending', 'granted', 'denied'];
 
 const VALID_STATUSES: AgentStatus[] = ['active', 'idle', 'paused', 'retired', 'error'];
 
@@ -307,6 +352,7 @@ export class SqliteStorage implements Storage {
         last_event_at: (totals.last_event_at as string) ?? null,
       },
       recent_events: recent.map(rowToEvent),
+      pending_approvals: this.listApprovals({ agent_id: id, status: 'pending' }),
     };
   }
 
@@ -425,12 +471,90 @@ export class SqliteStorage implements Storage {
     return this.getProvider(id);
   }
 
+  // --- approvals ------------------------------------------------------
+  // Phase 4 governance: human-in-the-loop approval requests. Every state
+  // transition is recorded in the event trail (approval.requested /
+  // approval.granted / approval.denied); a decided request can never be
+  // undecided or decided twice.
+
+  requestApproval(input: ApprovalInput): ApprovalRequest {
+    if (!this.getAgent(input.agent_id)) throw new ValidationError(`unknown agent_id: ${input.agent_id}`);
+    if (!input.title || typeof input.title !== 'string' || input.title.trim() === '') {
+      throw new ValidationError('title is required');
+    }
+    const requested_by = input.requested_by ?? 'agent';
+    if (!VALID_ACTORS.includes(requested_by)) throw new ValidationError(`invalid requested_by: ${requested_by}`);
+    const id = randomUUID();
+    const requested_at = now();
+    this.db
+      .prepare(
+        `INSERT INTO approvals (id, agent_id, title, detail, status, requested_by, requested_at)
+         VALUES (?, ?, ?, ?, 'pending', ?, ?)`,
+      )
+      .run(id, input.agent_id, input.title.trim(), input.detail ?? '', requested_by, requested_at);
+    this.appendEventInternal({
+      agent_id: input.agent_id,
+      type: 'approval.requested',
+      actor: requested_by,
+      summary: `Approval requested: ${input.title.trim()}`,
+      data: { approval_id: id },
+    });
+    return this.getApproval(id) as ApprovalRequest;
+  }
+
+  getApproval(id: string): ApprovalRequest | null {
+    const r = this.db.prepare('SELECT * FROM approvals WHERE id = ?').get(id) as Record<string, unknown> | undefined;
+    return r ? rowToApproval(r) : null;
+  }
+
+  listApprovals(opts: { agent_id?: string; status?: ApprovalStatus }): ApprovalRequest[] {
+    if (opts.status !== undefined && !VALID_APPROVAL_STATUSES.includes(opts.status)) {
+      throw new ValidationError(`invalid status: ${opts.status}`);
+    }
+    const conds: string[] = [];
+    const vals: SQLInputValue[] = [];
+    if (opts.agent_id) { conds.push('agent_id = ?'); vals.push(opts.agent_id); }
+    if (opts.status) { conds.push('status = ?'); vals.push(opts.status); }
+    const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
+    return (
+      this.db.prepare(`SELECT * FROM approvals ${where} ORDER BY requested_at DESC`).all(...vals) as Record<string, unknown>[]
+    ).map(rowToApproval);
+  }
+
+  decideApproval(id: string, decision: ApprovalDecisionInput): ApprovalRequest | null {
+    const existing = this.getApproval(id);
+    if (!existing) return null;
+    if (existing.status !== 'pending') {
+      throw new ValidationError(`approval request already decided (${existing.status}) — decisions are final`);
+    }
+    if (decision.decision !== 'granted' && decision.decision !== 'denied') {
+      throw new ValidationError(`invalid decision: ${decision.decision} — must be granted or denied`);
+    }
+    if (!decision.decided_by || typeof decision.decided_by !== 'string' || !decision.decided_by.trim()) {
+      throw new ValidationError('decided_by is required — record which human decided');
+    }
+    const decided_at = now();
+    const status: ApprovalStatus = decision.decision;
+    this.db
+      .prepare('UPDATE approvals SET status = ?, decided_by = ?, decided_at = ? WHERE id = ?')
+      .run(status, decision.decided_by.trim(), decided_at, id);
+    this.appendEventInternal({
+      agent_id: existing.agent_id,
+      type: `approval.${status}`,
+      actor: 'human',
+      summary: `Approval ${status}: ${existing.title}`,
+      data: { approval_id: id, decided_by: decision.decided_by.trim(), ...(decision.reason ? { reason: decision.reason } : {}) },
+    });
+    return this.getApproval(id) as ApprovalRequest;
+  }
+
   dashboardSummary(): DashboardSummary {
     const agents = this.listAgents();
     const byStatus = { active: 0, idle: 0, paused: 0, retired: 0, error: 0 } as Record<AgentStatus, number>;
     for (const a of agents) byStatus[a.status] += 1;
     const dayAgo = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
     const eventsRow = this.db.prepare('SELECT COUNT(*) AS c FROM events WHERE occurred_at >= ?').get(dayAgo) as { c: number };
+    const pendingRow = this.db.prepare("SELECT COUNT(*) AS c FROM approvals WHERE status = 'pending'").get() as { c: number };
     const recent = (
       this.db.prepare('SELECT id, agent_id, type, occurred_at, summary FROM events ORDER BY occurred_at DESC LIMIT 10').all() as Record<string, unknown>[]
     ).map((r) => ({
@@ -440,7 +564,7 @@ export class SqliteStorage implements Storage {
       occurred_at: r.occurred_at as string,
       summary: r.summary as string,
     }));
-    return { total_agents: agents.length, active_agents: byStatus.active, agents_by_status: byStatus, events_last_24h: Number(eventsRow.c), recent_events: recent };
+    return { total_agents: agents.length, active_agents: byStatus.active, agents_by_status: byStatus, events_last_24h: Number(eventsRow.c), pending_approvals: Number(pendingRow.c), recent_events: recent };
   }
 
   close(): void {

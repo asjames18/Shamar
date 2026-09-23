@@ -94,6 +94,12 @@
       <tbody id="events"><tr><td colspan="3">—</td></tr></tbody>
     </table>
 
+    <h2>Pending approvals</h2>
+    <table>
+      <thead><tr><th>Agent</th><th>Request</th><th>Requested</th><th>By</th></tr></thead>
+      <tbody id="approvals"><tr><td colspan="4">—</td></tr></tbody>
+    </table>
+
     <p class="hint">Tip: click <strong>Add agent</strong> to register an agent from this dashboard, or run <code>node examples/register-and-report.js</code> to register one from the command line. Activity appears here live. API key is read from <code>AGENTOS_DEV_API_KEY</code> or the field above. Click an agent's name for its detail page.</p>
   </div>
 
@@ -177,10 +183,11 @@ form.addEventListener('submit', async (e) => {
 });
 
 async function refreshList() {
-  const [sum, agents] = await Promise.all([get('/api/dashboard/summary'), get('/api/agents')]);
+  const [sum, agents, pending] = await Promise.all([get('/api/dashboard/summary'), get('/api/agents'), get('/api/approvals?status=pending')]);
   document.getElementById('cards').innerHTML = [
     [sum.total_agents, 'Total agents'], [sum.active_agents, 'Active'],
     [sum.events_last_24h, 'Events (24h)'],
+    [sum.pending_approvals || 0, 'Pending approvals'],
     [sum.agents_by_status.error || 0, 'Failed agents'],
   ].map(([n, l]) => `<div class="card"><div class="n">${n}</div><div class="l">${l}</div></div>`).join('');
 
@@ -196,8 +203,26 @@ async function refreshList() {
     <td><strong>${esc(byId[e.agent_id] || 'agent')}</strong> — ${esc(e.summary)}</td></tr>`).join('')
     || '<tr><td colspan="3">No events yet.</td></tr>';
 
+  document.getElementById('approvals').innerHTML = pending.approvals.map(a => `
+    <tr><td><a class="agent-link" data-id="${esc(a.agent_id)}">${esc(byId[a.agent_id] || 'agent')}</a></td>
+    <td><strong>${esc(a.title)}</strong>${a.detail ? `<br><span style="color:var(--dim)">${esc(a.detail)}</span>` : ''}</td>
+    <td>${ago(a.requested_at)}</td><td><span class="pill" style="color:var(--warn);border-color:var(--warn)">${esc(a.requested_by)}</span></td></tr>`).join('')
+    || '<tr><td colspan="4">No pending approvals — nothing is waiting on a human.</td></tr>';
+
   document.querySelectorAll('.agent-link').forEach(el =>
     el.addEventListener('click', () => showDetail(el.dataset.id)));
+}
+
+async function decideApproval(id, decision) {
+  const decided_by = prompt('Your name or email (recorded as the decider):');
+  if (!decided_by) return;
+  try {
+    document.getElementById('err').textContent = '';
+    await post(`/api/approvals/${encodeURIComponent(id)}/${decision}`, { decided_by: decided_by.trim() });
+    await refreshDetail();
+  } catch (e) {
+    document.getElementById('err').textContent = e.message;
+  }
 }
 
 async function refreshDetail() {
@@ -231,12 +256,25 @@ async function refreshDetail() {
     <div class="cards">${usageCards}</div>
     <h2>Identity</h2>
     <div class="kv">${identity}</div>
+    <h2>Pending approvals</h2>
+    ${(d.pending_approvals || []).map(p => `
+      <div style="background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--warn);border-radius:10px;padding:12px 16px;margin-bottom:10px">
+        <strong>${esc(p.title)}</strong>
+        ${p.detail ? `<div style="color:var(--dim);font-size:13px">${esc(p.detail)}</div>` : ''}
+        <div style="color:var(--dim);font-size:12px;margin:4px 0 8px">Requested ${ago(p.requested_at)} by ${esc(p.requested_by)}</div>
+        <div class="form-actions">
+          <button class="btn" data-decide="grant" data-id="${esc(p.id)}" style="padding:6px 14px;font-size:13px">Grant</button>
+          <button class="btn ghost" data-decide="deny" data-id="${esc(p.id)}" style="padding:6px 14px;font-size:13px">Deny</button>
+        </div>
+      </div>`).join('') || '<p class="hint" style="margin-top:0">No pending approvals for this agent.</p>'}
     <h2>Activity timeline</h2>
     <table class="timeline">
       <thead><tr><th>When</th><th>Event</th><th>Summary</th><th class="num">Tokens in</th><th class="num">Tokens out</th><th class="num">Duration</th></tr></thead>
       <tbody>${timeline}</tbody>
     </table>
     <p class="hint">Costs are shown only when reported by a provider — the control plane never estimates billing numbers.</p>`;
+  document.querySelectorAll('[data-decide]').forEach(btn =>
+    btn.addEventListener('click', () => decideApproval(btn.dataset.id, btn.dataset.decide)));
 }
 
 async function showDetail(id) {

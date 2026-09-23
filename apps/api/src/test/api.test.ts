@@ -60,6 +60,9 @@ interface ApiJson {
   total_agents?: number;
   agents_by_status?: Record<string, number>;
   events_last_24h?: number;
+  pending_approvals?: number;
+  approval?: { id: string; agent_id: string; title: string; status: string; decided_by: string | null; requested_at: string; decided_at: string | null };
+  approvals?: Array<{ id: string; agent_id: string; title: string; status: string }>;
   status?: string;
   recent_events?: Array<{ type: string; summary: string; occurred_at: string; tokens_in: number | null; tokens_out: number | null; duration_ms: number | null; cost_usd: number | null }>;
   last_check_in?: string | null;
@@ -390,4 +393,99 @@ test('providers: all kinds implemented — validate returns an honest result, ne
   assert.equal(validate.status, 200);
   assert.equal(validate.json.ok, false);
   assert.equal(validate.json.status, 'unhealthy');
+});
+
+test('approvals: request → grant flow with event trail', async () => {
+  const created = await api('POST', '/api/agents', { name: 'Approval Test Agent' });
+  const aid = req(created.json.agent, 'agent').id;
+
+  // Request: title required, requested_by defaults to agent.
+  const requested = await api('POST', '/api/approvals', {
+    agent_id: aid,
+    title: 'Send invoice to Acme Corp',
+    detail: 'Invoice #1042 for $1,500',
+  });
+  assert.equal(requested.status, 201);
+  const approval = req(requested.json.approval, 'approval');
+  assert.equal(approval.status, 'pending');
+  assert.equal(approval.decided_by, null);
+
+  // Listing by status and agent.
+  const listed = await api('GET', `/api/approvals?agent_id=${aid}&status=pending`);
+  assert.equal(listed.status, 200);
+  assert.ok(req(listed.json.approvals, 'approvals').some((a) => a.id === approval.id));
+
+  // Dashboard summary counts it; agent detail shows it.
+  const summary = await api('GET', '/api/dashboard/summary');
+  assert.ok(req(summary.json.pending_approvals, 'pending_approvals') >= 1);
+  const detail = await api('GET', `/api/agents/${aid}/detail`);
+  const pending = (detail.json as { pending_approvals?: Array<{ id: string }> }).pending_approvals;
+  assert.ok(pending?.some((p) => p.id === approval.id));
+
+  // Grant: decided_by is required; decision is final.
+  const granted = await api('POST', `/api/approvals/${approval.id}/grant`, {
+    decided_by: 'antonio@example.com',
+    reason: 'Verified against the books',
+  });
+  assert.equal(granted.status, 200);
+  const decided = req(granted.json.approval, 'approval');
+  assert.equal(decided.status, 'granted');
+  assert.equal(decided.decided_by, 'antonio@example.com');
+  assert.ok(decided.decided_at);
+
+  // Double-decide fails closed.
+  const again = await api('POST', `/api/approvals/${approval.id}/grant`, { decided_by: 'antonio@example.com' });
+  assert.equal(again.status, 400);
+  assert.match(req(again.json.error, 'error'), /already decided/);
+  const denyAfterGrant = await api('POST', `/api/approvals/${approval.id}/deny`, { decided_by: 'antonio@example.com' });
+  assert.equal(denyAfterGrant.status, 400);
+
+  // Event trail: approval.requested + approval.granted, newest first.
+  const events = await api('GET', `/api/events?agent_id=${aid}&limit=5`);
+  const types = req(events.json.events, 'events') as Array<{ type: string }>;
+  assert.ok(Array.isArray(types));
+  const typeList = (types as Array<{ type: string }>).map((e) => e.type);
+  assert.ok(typeList.includes('approval.requested') && typeList.includes('approval.granted'));
+});
+
+test('approvals: deny flow', async () => {
+  const created = await api('POST', '/api/agents', { name: 'Deny Test Agent' });
+  const aid = req(created.json.agent, 'agent').id;
+  const requested = await api('POST', '/api/approvals', {
+    agent_id: aid,
+    title: 'Delete production database',
+    requested_by: 'agent',
+  });
+  const id = req(requested.json.approval, 'approval').id;
+  const denied = await api('POST', `/api/approvals/${id}/deny`, { decided_by: 'antonio@example.com' });
+  assert.equal(denied.status, 200);
+  assert.equal(req(denied.json.approval, 'approval').status, 'denied');
+  const events = await api('GET', `/api/events?agent_id=${aid}&type=approval.denied`);
+  const evts = req(events.json.events, 'events');
+  assert.ok(Array.isArray(evts) && evts.length === 1);
+});
+
+test('approvals: validation fails closed', async () => {
+  const created = await api('POST', '/api/agents', { name: 'Validation Test Agent' });
+  const aid = req(created.json.agent, 'agent').id;
+
+  const unknownAgent = await api('POST', '/api/approvals', { agent_id: 'nope', title: 'x' });
+  assert.equal(unknownAgent.status, 400);
+  assert.match(req(unknownAgent.json.error, 'error'), /unknown agent_id/);
+
+  const noTitle = await api('POST', '/api/approvals', { agent_id: aid });
+  assert.equal(noTitle.status, 400);
+  assert.match(req(noTitle.json.error, 'error'), /title is required/);
+
+  const badStatus = await api('GET', '/api/approvals?status=bogus');
+  assert.equal(badStatus.status, 400);
+
+  const requested = await api('POST', '/api/approvals', { agent_id: aid, title: 'Needs a decider' });
+  const id = req(requested.json.approval, 'approval').id;
+  const noDecider = await api('POST', `/api/approvals/${id}/grant`, {});
+  assert.equal(noDecider.status, 400);
+  assert.match(req(noDecider.json.error, 'error'), /decided_by is required/);
+
+  const unknownId = await api('POST', '/api/approvals/nope/grant', { decided_by: 'antonio@example.com' });
+  assert.equal(unknownId.status, 404);
 });
