@@ -110,7 +110,12 @@ export interface AgentEventInput {
   data?: Record<string, unknown>;
   tokens_in?: number | null;
   tokens_out?: number | null;
-  /** Clients must not assert cost; the server computes it. Accepted but ignored in v0.1. */
+  /**
+   * Client-asserted cost in USD — stored as reported data, not server-verified
+   * (ADR-0005). The server never estimates costs: null means unknown. Must be
+   * a finite, non-negative number when present; invalid values are rejected
+   * with 400. Server-measured costs (invoke paths) are set internally instead.
+   */
   cost_usd?: number | null;
   duration_ms?: number | null;
 }
@@ -268,6 +273,20 @@ export interface AgentUsage {
 }
 
 /** Agent detail view payload: identity + usage + activity timeline + pending approvals. */
+// ---------------------------------------------------------------- Budgets
+
+/** Live view of an agent's monthly spend against its budget (Phase 4 governance). */
+export interface AgentBudgetState {
+  /** Agent's monthly budget cap in USD. */
+  limit_usd: number;
+  /** Sum of real reported costs this calendar month (unknown costs stay out — never estimated). */
+  spend_month_usd: number;
+  /** spend_month_usd / limit_usd, e.g. 0.85 = 85% of budget used. */
+  pct_used: number;
+  /** 'ok' (< 80%), 'warning' (>= 80%, < 100%), 'exceeded' (>= 100%). */
+  status: 'ok' | 'warning' | 'exceeded';
+}
+
 export interface AgentDetail {
   agent: Agent;
   /** Convenience alias for agent.last_heartbeat_at. */
@@ -277,4 +296,6 @@ export interface AgentDetail {
   recent_events: AgentEvent[];
   /** Approval requests still waiting on a human decision, newest first. */
   pending_approvals: ApprovalRequest[];
+  /** Budget meter, or null when the agent has no monthly budget set. */
+  budget: AgentBudgetState | null;
 }

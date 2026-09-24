@@ -1,7 +1,9 @@
 # ADR-0003: Agent & Event Schema
 
-**Status:** Accepted
+**Status:** Accepted — rule 3 superseded by ADR-0005 (2026-09-23)
 **Date:** 2026-09-23
+
+> **Amendment (2026-09-23):** rule 3 ("cost_usd computed server-side; clients may not assert cost") is superseded by **ADR-0005**. The server never estimates costs; `cost_usd` is recorded only when asserted by a reporter — server-measured via invoke paths (real adapter usage, or 0 for local inference) or self-reported by clients via public ingest (validated: finite, non-negative). The rest of this ADR stands.
 
 ## Context
 

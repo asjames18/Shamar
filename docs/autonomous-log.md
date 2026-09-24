@@ -426,3 +426,53 @@ Scope: first Phase 4 slice — approval request/grant/deny as a first-class API.
 **Committed:** `981fe8c feat(approvals): human-in-the-loop approval request/grant/deny (Phase 4 first slice)` — local only (Mosheh syncs to GitHub).
 
 **Next:** Phase 4 remaining — autonomy-level policy rules, budgets with warnings/throttling, `policy.blocked` enforcement. (Demo verdict, live key checks, and Phase 2 real-daemon still need Antonio.)
+
+## 2026-09-23 ~20:15 EDT — IN PROGRESS: Phase 4, cycle 2: budgets with warnings + invoke throttling (agent: antonio/loop)
+
+Scope: first of the remaining Phase 4 governance pieces — per-agent monthly budgets. `spendSince` in store (real costs only, nulls excluded); edge-triggered `budget.warning` (80%) / `budget.exceeded` (100%) checks fired when a `model.called` event with real cost is stored (covers both public ingest + provider invoke paths); invoke endpoint returns 403 + emits `policy.blocked` when an agent's monthly spend is already at budget (budget checked before the provider is touched); `budget` block on `AgentDetail` (limit/spend/pct); web dashboard agent-detail budget meter with warning/exceeded states; API tests for warning, exceeded-once, and throttle. No changes to event schema (types already declared), no guessed costs.
+
+## 2026-09-23 ~20:30 EDT — Phase 4, cycle 2: budgets with warnings + invoke throttling (agent: antonio/loop) — COMPLETE
+
+**Task selected:** P8 new MVP feature — Phase 4 governance, second slice: per-agent monthly budgets (approvals slice done previous cycle; MVP targets otherwise done except Antonio-blocked items).
+
+**Changes:**
+- `packages/types/src/index.ts` — `AgentBudgetState` (`limit_usd`, `spend_month_usd`, `pct_used`, `status: ok|warning|exceeded`); `AgentDetail.budget` (null when no budget set).
+- `apps/api/src/store.ts` — `spendSince` (real reported costs only: `cost_usd IS NOT NULL`, never estimated — ADR-0003), `budgetState` (live meter, $0 budget = immediately exceeded), `checkBudget` (edge-triggered: `budget.warning` at 80%, `budget.exceeded` at 100%, at most one each per calendar month), hooked into `appendEventInternal` so every stored `model.called` with a real cost fires the check (covers both public ingest and provider invoke paths); `getAgentDetail` returns the budget block.
+- `apps/api/src/server.ts` — budget gate on `POST /api/providers/:id/invoke`: when the agent is at/over budget, returns 403 with the budget block and emits `policy.blocked` (with `checkBudget` run first so `budget.exceeded` is on the trail). The gate runs **before** `adapterFor`/provider call — no cost can be incurred while throttled.
+- `apps/web/index.html` — budget meter card on agent detail: spend vs limit, color-coded progress bar (ok/warning/exceeded), honest copy that unknown costs are never estimated.
+- Tests: 3 new API tests (budget null when unset; warning at 80% then exceeded at 100% with no duplicate alerts; invoke 403 + `policy.blocked` audit at $0 budget, and 502-passthrough proving the gate only blocks at budget) — **78/78 pass**.
+
+**Verification:** `npm run lint` ✅ zero warnings · `npm run typecheck` ✅ · `npm test` ✅ 78/78 · `npm run build` ✅. E2E on live API + scratch SQLite: budget 10, event cost 8.5 → `status: warning`, one `budget.warning` ✅; cost +2.5 → `exceeded`, one `budget.exceeded` ✅; invoke → 403 `monthly budget exceeded…` + one `policy.blocked` ✅. Scratch DB deleted.
+
+**Security self-review:** no secrets touched; gate fails closed; budget block is read-only data derived from stored events; no new auth surface; alert events carry only limit/spend/pct — no cost-source details, no provider internals.
+
+**Flagged (not in scope):** doc/code mismatch — `AgentEventInput.cost_usd` says "accepted but ignored in v0.1" but `appendEvent` actually stores client-asserted costs. Budget accounting currently trusts any stored non-null cost regardless of source. Decide separately: strip client-asserted costs (documented intent) or bless them as reported data (code reality). Needs an ADR before Phase 4 enforcement work leans on it.
+
+**Committed:** `feat(governance): per-agent monthly budgets with warnings and invoke throttling` — local only (Mosheh syncs to GitHub).
+
+**Next:** Phase 4 remaining — autonomy-level policy rules (L0–L5) with enforcement, per-department budgets. (Demo verdict, live BYOK key checks, Phase 2 real-daemon still need Antonio.)
+
+## 2026-09-23 ~21:15 EDT — IN PROGRESS: ADR-0005 resolve cost trust semantics (agent: antonio/loop)
+
+Scope: P4 arch problem flagged in the 20:30 cycle — `AgentEventInput.cost_usd` doc says "accepted but ignored in v0.1" (ADR-0003 rule 3 says clients may not assert cost), but the code stores client-asserted costs and budget accounting trusts any non-null stored cost. Phase 4 enforcement leans on cost data, so the semantics need a decision before more governance lands. ADR-0005 records the resolution; code gets a doc fix + validation that self-reported costs are sane (non-negative, finite — currently a negative/NaN cost sails straight into the budget meter). One test each for reject-negative, reject-non-finite, accept-valid.
+
+## 2026-09-23 ~21:25 EDT — ADR-0005 resolve cost trust semantics (agent: antonio/loop) — COMPLETE
+
+**Task selected:** P4 arch problem — the cost_usd doc/code mismatch flagged in the 20:30 cycle (ADR-0003 rule 3 said clients may not assert cost; the code stored client-asserted costs and budgets trusted them). Phase 4 enforcement leans on cost data, so this needed a decision first.
+
+**Decision (ADR-0005):** the server never computes or estimates costs (no pricing tables, null-cost rule stands). `cost_usd` is recorded only when asserted by a reporter: (a) server-measured via invoke paths — real adapter usage, or 0 by definition for local inference; (b) client self-reported via public ingest — stored as *reported* data, not server-verified. Rationale: budgets are per-agent, so fabricated self-reported spend can only self-throttle; there is no cross-tenant attack surface in v0.1's single-tenant design. ADR-0003 marked partially superseded.
+
+**Changes:**
+- `docs/adr/0005-cost-reporting.md` — new ADR recording the decision, consequences, and the provenance model (ingest path = agent-reported, invoke path = server-measured).
+- `docs/adr/0003-agent-event-schema.md` — status line notes rule 3 superseded by ADR-0005.
+- `packages/types/src/index.ts` — `AgentEventInput.cost_usd` doc comment fixed (was lying: "accepted but ignored in v0.1"; now documents reported-data semantics + validation rule).
+- `apps/api/src/store.ts` — `appendEventInternal` rejects negative/NaN/Infinite `cost_usd` with 400 (previously a negative cost sailed straight into the budget meter; covers both public ingest and server paths).
+- Tests: 3 new (valid self-reported cost stored; negative → 400; NaN/Infinity rejected at store level — JSON can't carry them, so exercised directly) — **81/81 pass**.
+
+**Verification:** `npm run lint` ✅ zero warnings · `npm run typecheck` ✅ · `npm test` ✅ 81/81 · `npm run build` ✅. (First test run caught 2 real bugs in my own tests — reused a deleted agent id, and NaN/Infinity can't survive JSON — fixed, rerun green.)
+
+**Security self-review:** no secrets touched; the new check is a fail-closed numeric guard on the shared ingest path; no new auth surface; no provider coupling; budget semantics unchanged except that garbage input is now rejected loudly instead of stored.
+
+**Committed:** `6d53033 docs(adr): ADR-0005 resolves cost reporting semantics + validate self-reported costs` (+ `ddd91f2` STATUS health line) — local only (Mosheh syncs to GitHub).
+
+**Next:** Phase 4 remaining — autonomy-level policy rules (L0–L5) with enforcement, per-department budgets. (Demo verdict, live BYOK key checks, Phase 2 real-daemon still need Antonio.)

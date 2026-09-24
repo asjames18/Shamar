@@ -6,7 +6,7 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import type { AddressInfo } from 'node:net';
 import { createApp } from '../server.js';
-import { SqliteStorage } from '../store.js';
+import { SqliteStorage, ValidationError } from '../store.js';
 
 process.env.AGENTOS_DEV_API_KEY = 'test-key';
 
@@ -58,6 +58,7 @@ interface ApiJson {
   providers?: Array<{ id: string; has_credential?: boolean }>;
   provider?: { id: string; has_credential: boolean; credential?: string };
   total_agents?: number;
+  budget?: { limit_usd: number; spend_month_usd: number; pct_used: number; status: string } | null;
   agents_by_status?: Record<string, number>;
   events_last_24h?: number;
   pending_approvals?: number;
@@ -488,4 +489,121 @@ test('approvals: validation fails closed', async () => {
 
   const unknownId = await api('POST', '/api/approvals/nope/grant', { decided_by: 'antonio@example.com' });
   assert.equal(unknownId.status, 404);
+});
+
+test('budgets: detail shows null budget when none is set', async () => {
+  const created = await api('POST', '/api/agents', { name: 'No Budget Agent' });
+  const aid = req(created.json.agent, 'agent').id;
+  const detail = await api('GET', `/api/agents/${aid}/detail`);
+  assert.equal(detail.status, 200);
+  assert.equal((detail.json as ApiJson).budget, null);
+});
+
+test('budgets: warning at 80% then exceeded once at 100% (edge-triggered)', async () => {
+  const created = await api('POST', '/api/agents', { name: 'Budget Test Agent', budget_monthly_usd: 1.0 });
+  const aid = req(created.json.agent, 'agent').id;
+  const call = (cost: number) =>
+    api('POST', '/api/events', { agent_id: aid, type: 'model.called', cost_usd: cost, summary: `call $${cost}` });
+  const budgetOf = async () => {
+    const detail = await api('GET', `/api/agents/${aid}/detail`);
+    assert.equal(detail.status, 200);
+    const json = detail.json as ApiJson;
+    return { budget: req(json.budget, 'budget'), counts: req(json.usage, 'usage').events_by_type };
+  };
+
+  await call(0.5); // 50% — no alert
+  let { budget, counts } = await budgetOf();
+  assert.equal(budget.status, 'ok');
+  assert.equal(budget.spend_month_usd, 0.5);
+  assert.equal(counts['budget.warning'] ?? 0, 0);
+
+  await call(0.3); // 80% — warning fires
+  ({ budget, counts } = await budgetOf());
+  assert.equal(budget.status, 'warning');
+  assert.equal(counts['budget.warning'], 1);
+
+  await call(0.15); // 95% — still warning, no duplicate
+  ({ budget, counts } = await budgetOf());
+  assert.equal(budget.status, 'warning');
+  assert.equal(counts['budget.warning'], 1);
+  assert.equal(counts['budget.exceeded'] ?? 0, 0);
+
+  await call(0.1); // 105% — exceeded fires, warning count frozen
+  ({ budget, counts } = await budgetOf());
+  assert.equal(budget.status, 'exceeded');
+  assert.equal(counts['budget.exceeded'], 1);
+  assert.equal(counts['budget.warning'], 1);
+
+  await call(0.01); // more spend — exceeded must not duplicate
+  ({ counts } = await budgetOf());
+  assert.equal(counts['budget.exceeded'], 1);
+});
+
+test('budgets: invoke blocked at budget (403) with policy.blocked audit; open gate passes through', async () => {
+  const providerId = await createOllamaProvider('http://localhost:1'); // unreachable — budget gate runs before any network call
+
+  // $0 budget = spend nothing: invokes are throttled immediately.
+  const created = await api('POST', '/api/agents', { name: 'Throttle Test Agent', budget_monthly_usd: 0 });
+  const aid = req(created.json.agent, 'agent').id;
+  const invoke = (id: string) =>
+    api('POST', `/api/providers/${providerId}/invoke`, {
+      agent_id: id,
+      model: 'x',
+      messages: [{ role: 'user', content: 'hi' }],
+    });
+
+  const blocked = await invoke(aid);
+  assert.equal(blocked.status, 403);
+  assert.match(req((blocked.json as ApiJson).error, 'error'), /budget/);
+  const detail = await api('GET', `/api/agents/${aid}/detail`);
+  const counts = req((detail.json as ApiJson).usage, 'usage').events_by_type;
+  assert.equal(counts['policy.blocked'], 1);
+  assert.equal(counts['budget.exceeded'], 1); // alert made the audit trail even without a spend event
+
+  // An agent with headroom in its budget sails through the gate: the daemon is
+  // unreachable, so the failure is a 502 from the adapter — not a 403.
+  const created2 = await api('POST', '/api/agents', { name: 'Headroom Agent', budget_monthly_usd: 100 });
+  const aid2 = req(created2.json.agent, 'agent').id;
+  const passthrough = await invoke(aid2);
+  assert.equal(passthrough.status, 502);
+});
+
+test('costs: valid self-reported cost is stored as reported data (ADR-0005)', async () => {
+  const created = await api('POST', '/api/agents', { name: 'Cost Reporter' });
+  const id = req(created.json.agent, 'agent').id;
+  const { status, json } = await api('POST', '/api/events', {
+    agent_id: id,
+    type: 'model.called',
+    summary: 'external run',
+    tokens_in: 100,
+    tokens_out: 50,
+    cost_usd: 0.0012,
+  });
+  assert.equal(status, 201);
+  assert.equal((req(json.events, 'event') as TestEvent).cost_usd, 0.0012);
+});
+
+test('costs: negative cost is rejected (400)', async () => {
+  const created = await api('POST', '/api/agents', { name: 'Cost Skeptic' });
+  const id = req(created.json.agent, 'agent').id;
+  const { status, json } = await api('POST', '/api/events', {
+    agent_id: id,
+    type: 'model.called',
+    summary: 'bad cost',
+    cost_usd: -1,
+  });
+  assert.equal(status, 400);
+  assert.match(req(json.error, 'error'), /cost_usd/);
+});
+
+test('costs: non-finite cost is rejected at the store level (400)', async () => {
+  // NaN/Infinity can't survive a JSON round-trip, so exercise the store directly.
+  const created = await api('POST', '/api/agents', { name: 'Cost Skeptic 2' });
+  const id = req(created.json.agent, 'agent').id;
+  for (const bad of [Number.NaN, Number.POSITIVE_INFINITY]) {
+    assert.throws(
+      () => storage.appendEvent({ agent_id: id, type: 'model.called', summary: 'bad cost', cost_usd: bad }),
+      (err: unknown) => err instanceof ValidationError && /cost_usd/.test(err.message),
+    );
+  }
 });

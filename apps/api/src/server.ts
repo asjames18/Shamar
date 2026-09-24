@@ -192,6 +192,24 @@ export function createApp(storage: Storage) {
           return { role: role as 'system' | 'user' | 'assistant', content };
         });
         if (!storage.getAgent(body.agent_id)) throw new ValidationError(`unknown agent_id: ${body.agent_id}`);
+        // Budget gate: an agent at/over its monthly budget cannot invoke models
+        // through the control plane. Checked BEFORE the provider is touched so
+        // no cost can be incurred. Fails closed with a policy.blocked audit event.
+        const budget = storage.budgetState(body.agent_id);
+        if (budget && budget.status === 'exceeded') {
+          storage.checkBudget(body.agent_id); // make sure budget.exceeded is on the trail
+          storage.appendServerEvent({
+            agent_id: body.agent_id,
+            type: 'policy.blocked',
+            actor: 'system',
+            summary: `Model invoke blocked: monthly budget $${budget.limit_usd.toFixed(2)} exceeded ($${budget.spend_month_usd.toFixed(2)} spent)`,
+            data: { action: 'provider.invoke', reason: 'budget_exceeded', budget },
+          });
+          return send(res, 403, {
+            error: 'monthly budget exceeded: model invokes are blocked for this agent',
+            budget,
+          });
+        }
         let adapter;
         try {
           adapter = adapterFor(provider);

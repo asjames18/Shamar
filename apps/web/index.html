@@ -248,6 +248,25 @@ async function refreshDetail() {
     <td class="num">${fmtNum(e.tokens_out)}</td><td class="num">${fmtDur(e.duration_ms)}</td></tr>`
   ).join('') || '<tr><td colspan="6">No events yet.</td></tr>';
 
+  const b = d.budget;
+  const budgetCard = b ? (() => {
+    const pct = Math.min(100, Math.round(b.pct_used * 100));
+    const color = b.status === 'exceeded' ? 'var(--err)' : b.status === 'warning' ? 'var(--warn)' : 'var(--ok)';
+    const label = b.status === 'exceeded' ? 'Budget exceeded — model invokes are blocked'
+      : b.status === 'warning' ? 'Budget warning — over 80% used' : 'Budget on track';
+    return `<div class="card" style="border-left:3px solid ${color};margin-bottom:18px">
+      <div class="l" style="color:var(--dim);font-size:12px;text-transform:uppercase;letter-spacing:.6px">Monthly budget</div>
+      <div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:6px;margin:6px 0 10px">
+        <div style="font-size:20px;font-weight:700">$${Number(b.spend_month_usd).toFixed(2)} <span style="color:var(--dim);font-weight:400;font-size:14px">of $${Number(b.limit_usd).toFixed(2)}</span></div>
+        <div style="color:${color};font-weight:700;font-size:14px">${label}</div>
+      </div>
+      <div style="background:var(--line);border-radius:999px;height:10px;overflow:hidden">
+        <div style="width:${pct}%;height:100%;background:${color};border-radius:999px;transition:width .4s"></div>
+      </div>
+      <div class="hint" style="margin-top:8px">Spend counts only real reported costs this month — unknown costs are never estimated.</div>
+    </div>`;
+  })() : '';
+
   document.getElementById('detail').innerHTML = `
     <h2 style="margin-top:8px">${esc(a.name)} <span class="pill ${esc(a.status)}">${esc(a.status)}</span></h2>
     <p style="color:var(--dim)">${esc(a.description) || ''}</p>
@@ -256,6 +275,7 @@ async function refreshDetail() {
     <div class="cards">${usageCards}</div>
     <h2>Identity</h2>
     <div class="kv">${identity}</div>
+    ${budgetCard}
     <h2>Pending approvals</h2>
     ${(d.pending_approvals || []).map(p => `
       <div style="background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--warn);border-radius:10px;padding:12px 16px;margin-bottom:10px">

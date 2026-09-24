@@ -12,6 +12,7 @@ import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type {
   Agent,
+  AgentBudgetState,
   AgentDetail,
   AgentEvent,
   AgentEventInput,
@@ -41,6 +42,18 @@ export interface Storage {
   getAgentDetail(id: string): AgentDetail | null;
   // events
   appendEvent(input: AgentEventInput): AgentEvent;
+  /**
+   * Live budget meter for an agent, or null when it has no monthly budget.
+   * Spend is the sum of real reported costs (cost_usd NOT NULL) this calendar
+   * month — unknown costs stay out, never estimated (ADR-0003).
+   */
+  budgetState(agentId: string): AgentBudgetState | null;
+  /**
+   * Fire edge-triggered budget alerts (`budget.warning` at 80%, `budget.exceeded`
+   * at 100%). Each alert is emitted at most once per calendar month. Safe to
+   * call any time; no-op when the agent has no budget.
+   */
+  checkBudget(agentId: string): void;
   /**
    * Server-side event append (internal use only, never exposed via /api/events).
    * Unlike appendEvent, the server may set cost_usd when it is known by
@@ -353,7 +366,69 @@ export class SqliteStorage implements Storage {
       },
       recent_events: recent.map(rowToEvent),
       pending_approvals: this.listApprovals({ agent_id: id, status: 'pending' }),
+      budget: this.budgetState(id),
     };
+  }
+
+  private monthStart(): string {
+    const d = new Date();
+    d.setDate(1);
+    d.setHours(0, 0, 0, 0);
+    return d.toISOString();
+  }
+
+  /** Real reported spend (cost_usd IS NOT NULL) for an agent since the given ISO time. */
+  spendSince(agentId: string, sinceIso: string): number {
+    const row = this.db
+      .prepare(
+        `SELECT COALESCE(SUM(cost_usd), 0) AS spend FROM events
+         WHERE agent_id = ? AND occurred_at >= ? AND cost_usd IS NOT NULL`,
+      )
+      .get(agentId, sinceIso) as { spend: number };
+    return Number(row.spend);
+  }
+
+  budgetState(agentId: string): AgentBudgetState | null {
+    const agent = this.getAgent(agentId);
+    if (!agent || agent.budget_monthly_usd == null) return null;
+    const limit = Number(agent.budget_monthly_usd);
+    if (!Number.isFinite(limit) || limit < 0) return null;
+    const spend = this.spendSince(agentId, this.monthStart());
+    if (limit === 0) {
+      // A $0 budget means "spend nothing": any spend (or the mere cap) is exceeded.
+      return { limit_usd: 0, spend_month_usd: spend, pct_used: 1, status: 'exceeded' };
+    }
+    const pct = spend / limit;
+    return {
+      limit_usd: limit,
+      spend_month_usd: spend,
+      pct_used: pct,
+      status: pct >= 1 ? 'exceeded' : pct >= 0.8 ? 'warning' : 'ok',
+    };
+  }
+
+  checkBudget(agentId: string): void {
+    const state = this.budgetState(agentId);
+    if (!state) return;
+    const since = this.monthStart();
+    const alerted = (type: string) =>
+      (
+        this.db
+          .prepare(`SELECT COUNT(*) AS c FROM events WHERE agent_id = ? AND type = ? AND occurred_at >= ?`)
+          .get(agentId, type, since) as { c: number }
+      ).c > 0;
+    const summaryOf = (verb: string) =>
+      `Monthly budget ${verb}: $${state.spend_month_usd.toFixed(2)} of $${state.limit_usd.toFixed(2)} spent (${Math.round(state.pct_used * 100)}%)`;
+    const data = { limit_usd: state.limit_usd, spend_month_usd: state.spend_month_usd, pct_used: state.pct_used };
+    if (state.status === 'exceeded') {
+      if (!alerted('budget.exceeded')) {
+        this.appendEventInternal({ agent_id: agentId, type: 'budget.exceeded', actor: 'system', summary: summaryOf('exceeded'), data });
+      }
+      return;
+    }
+    if (state.status === 'warning' && !alerted('budget.warning') && !alerted('budget.exceeded')) {
+      this.appendEventInternal({ agent_id: agentId, type: 'budget.warning', actor: 'system', summary: summaryOf('warning'), data });
+    }
   }
 
   private appendEventInternal(input: {
@@ -373,6 +448,12 @@ export class SqliteStorage implements Storage {
       throw new ValidationError(
         `unknown event type: ${input.type}. Known types: ${KNOWN_EVENT_TYPES.join(', ')}`,
       );
+    }
+    // ADR-0005: self-reported costs are stored as reported data, not verified —
+    // but they must be sane. A negative or non-finite cost would poison the
+    // budget meter, so reject it loudly (400) instead of silently storing.
+    if (input.cost_usd != null && (!Number.isFinite(input.cost_usd) || input.cost_usd < 0)) {
+      throw new ValidationError('cost_usd must be a finite, non-negative number or null');
     }
     const id = randomUUID();
     const occurred_at = input.occurred_at ?? now();
@@ -397,6 +478,13 @@ export class SqliteStorage implements Storage {
     // cost_usd defaults to NULL: unknown costs are recorded as unknown, never
     // guessed (ADR-0003). Server-side pricing tables land in Phase 3 (ADR-0004).
     const r = this.db.prepare('SELECT * FROM events WHERE id = ?').get(id) as Record<string, unknown>;
+    // Budget accounting only ever sees real reported costs. When a model call
+    // lands with a known cost, fire edge-triggered budget alerts (warning at
+    // 80%, exceeded at 100%) — one pass, no recursion (checkBudget emits
+    // budget.* events, never model.called).
+    if (input.type === 'model.called' && input.cost_usd != null) {
+      this.checkBudget(input.agent_id);
+    }
     return rowToEvent(r);
   }
 
