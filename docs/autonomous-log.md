@@ -584,3 +584,24 @@ Scope: `POST /api/agents/:id/{pause,resume,retire,clone}` with transition rules 
 **Security self-review:** no secrets touched; reasons are length-validated (no log bloat); transition conflicts fail closed (409, never a silent state change); the lifecycle invoke gate runs before any provider network call; retired agents can't be silently re-armed except via the raw admin PATCH (maintainer key only, documented above); no new auth surface (routes behind the same API key).
 
 **Next:** Phase 5 remainder — human → agent delegation management UI. Demo verdict, live BYOK key checks, Phase 2 real-daemon still need Antonio. Open PRs: none.
+
+## 2026-09-23 ~23:20 EDT — IN PROGRESS: Delegation management UI — guarded supervisor/owner assignment on agent detail (agent: antonio/loop)
+
+Scope: harden `PATCH /api/agents/:id` supervisor assignment server-side (target must exist, no self-supervision, no delegation cycles — fail closed 400), emit `agent.delegated` audit events on delegation changes, and add a "Delegation" section to the agent detail view (owner text input + save/clear, supervisor select from live agent list, honest dangling-supervisor display). Closes the last Phase 5 remainder item.
+
+## 2026-09-23 ~23:40 EDT — Phase 5 delegation management UI: guarded supervisor/owner assignment (agent: antonio/loop) — COMPLETE
+
+**Task selected:** Phase 5 remainder — delegation management UI (P8 new MVP feature per directive; Phase 4 complete, nothing claimed by the other agent). This closes the last queued Phase 5 item.
+
+**What changed:**
+- `apps/api/src/store.ts` — `updateAgent` now guards `supervisor_agent_id` assignments server-side: target must be an existing agent (400), no self-supervision (400), no delegation cycles via chain walk (400, fail closed). Clearing (null) always allowed. Real gap this fixed: before, any supervisor id could be written raw through PATCH with no validation — the org view and L5 approval checks would have followed a corrupt chain. Every effective owner/supervisor change emits an `agent.delegated` audit event with `data.supervisor_from/to` + `data.owner_from/to` (actor `human`).
+- `apps/web/index.html` — agent detail gained a "Delegation" section (mobile-first): human-owner text input with Save/Clear, supervisor `<select>` built from the live agent list (self excluded), honest "supervisor agent was removed" callout for dangling links, server errors surfaced through the existing error path; new `patch()` fetch helper; org empty states now point at the Delegation editor instead of raw `supervisor_agent_id`.
+- Tests: 1 new — valid chain, self-supervision 400, unknown target 400, cycle 400, clear OK, owner audit; `agent.delegated` counts correct (2 on B, 1 on A, 1 on C) and failed attempts left the chain untouched. **97/97 pass.**
+
+**Verification:** `npm run lint` ✅ zero warnings · `npm run typecheck` ✅ · `npm test` ✅ 97/97 · `npm run build` ✅ · dashboard inline script `node --check` ✅. E2E against a live API: rep → lead 200 → `/api/org` delegation "E2E-Rep → E2E-Lead" + owner row; cycle lead → rookie 400 "delegation cycle"; self 400; owner "Antonio" set; clear supervisor 200.
+
+**Security self-review:** assignment guards fail closed server-side (client-side dropdown can't be trusted); `agent.delegated` events write from/to ids only — no prompt/response bodies, no secrets; no new auth surface (PATCH behind the existing API key); owner is free text but length is bounded by normal input, stored raw, escaped on render (`esc()`).
+
+**Committed:** `9094baf` local only (Mosheh syncs to GitHub).
+
+**Next:** Phase 5 COMPLETE. Remaining before the promotion decision (~a week out): Antonio's demo verdict (launch post held), live BYOK key checks, Phase 2 real-daemon Ollama run (his machine). Open PRs: none.

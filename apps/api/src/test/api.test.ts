@@ -1110,3 +1110,60 @@ test('lifecycle: invoke is blocked for paused and retired agents (403) with poli
   const detail = await api('GET', `/api/agents/${aid}/detail`);
   assert.equal(req(detail.json.usage, 'usage').events_by_type['policy.blocked'], 2);
 });
+
+test('delegation: PATCH supervisor/owner is guarded and audited', async () => {
+  const mk = async (name: string) => {
+    const r = await api('POST', '/api/agents', { name });
+    assert.equal(r.status, 201);
+    return req(r.json.agent, 'agent').id;
+  };
+  const a = await mk('Del A');
+  const b = await mk('Del B');
+  const c = await mk('Del C');
+
+  // Valid chain: B reports to A, C reports to B.
+  let r = await api('PATCH', `/api/agents/${b}`, { supervisor_agent_id: a });
+  assert.equal(r.status, 200);
+  r = await api('PATCH', `/api/agents/${c}`, { supervisor_agent_id: b });
+  assert.equal(r.status, 200);
+
+  // Self-supervision fails closed.
+  r = await api('PATCH', `/api/agents/${a}`, { supervisor_agent_id: a });
+  assert.equal(r.status, 400);
+  assert.match(req(r.json.error, 'error'), /itself/);
+
+  // Unknown target fails closed.
+  r = await api('PATCH', `/api/agents/${a}`, { supervisor_agent_id: 'nope' });
+  assert.equal(r.status, 400);
+  assert.match(req(r.json.error, 'error'), /existing agent/);
+
+  // Cycle: A -> C would close A -> C -> B -> A. Rejected.
+  r = await api('PATCH', `/api/agents/${a}`, { supervisor_agent_id: c });
+  assert.equal(r.status, 400);
+  assert.match(req(r.json.error, 'error'), /cycle/);
+
+  // Clearing the supervisor is allowed.
+  r = await api('PATCH', `/api/agents/${b}`, { supervisor_agent_id: null });
+  assert.equal(r.status, 200);
+
+  // Owner assignment is audited too.
+  r = await api('PATCH', `/api/agents/${a}`, { owner: 'Antonio' });
+  assert.equal(r.status, 200);
+  assert.equal(req(r.json.agent, 'agent').owner, 'Antonio');
+
+  // Audit trail: B gained two agent.delegated events (assign + clear), A one (owner).
+  const detailB = await api('GET', `/api/agents/${b}/detail`);
+  assert.equal(detailB.status, 200);
+  assert.equal(req(detailB.json.usage, 'usage').events_by_type['agent.delegated'], 2);
+  const detailA = await api('GET', `/api/agents/${a}/detail`);
+  assert.equal(detailA.status, 200);
+  assert.equal(req(detailA.json.usage, 'usage').events_by_type['agent.delegated'], 1);
+
+  // Failed attempts left the chain untouched.
+  const detailC = await api('GET', `/api/agents/${c}/detail`);
+  assert.equal(detailC.status, 200);
+  assert.equal(req(detailC.json.usage, 'usage').events_by_type['agent.delegated'], 1);
+  const list = await api('GET', '/api/agents');
+  const ag = (list.json.agents ?? []).find((x) => x.id === a);
+  assert.ok(ag, 'agent A still listed');
+});

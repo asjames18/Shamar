@@ -359,6 +359,34 @@ export class SqliteStorage implements Storage {
     if (patch.autonomy_level !== undefined && (!Number.isInteger(patch.autonomy_level) || patch.autonomy_level < 0 || patch.autonomy_level > 5)) {
       throw new ValidationError('autonomy_level must be an integer 0-5');
     }
+    // Delegation guards (Phase 5): a supervisor assignment must reference a
+    // real, different agent and must not close a delegation cycle — otherwise
+    // the org view and L5 approval checks would follow a corrupt chain.
+    // Clearing (null) is always allowed.
+    if (patch.supervisor_agent_id !== undefined && patch.supervisor_agent_id !== null) {
+      if (typeof patch.supervisor_agent_id !== 'string' || patch.supervisor_agent_id.trim() === '') {
+        throw new ValidationError('supervisor_agent_id must be an agent id or null');
+      }
+      if (patch.supervisor_agent_id === id) {
+        throw new ValidationError('an agent cannot supervise itself');
+      }
+      const target = this.getAgent(patch.supervisor_agent_id);
+      if (!target) {
+        throw new ValidationError('supervisor_agent_id does not reference an existing agent');
+      }
+      // Walk the target's supervisor chain; if it leads back to this agent,
+      // the assignment would create a cycle.
+      const seen = new Set<string>([id]);
+      let cursor: string | null = target.supervisor_agent_id;
+      while (cursor) {
+        if (seen.has(cursor)) {
+          throw new ValidationError('supervisor assignment would create a delegation cycle');
+        }
+        seen.add(cursor);
+        const next = this.getAgent(cursor);
+        cursor = next ? next.supervisor_agent_id : null;
+      }
+    }
     const sets: string[] = [];
     const vals: SQLInputValue[] = [];
     const set = (col: string, v: SQLInputValue) => { sets.push(`${col} = ?`); vals.push(v); };
@@ -367,8 +395,7 @@ export class SqliteStorage implements Storage {
     if (patch.department !== undefined) set('department', patch.department);
     if (patch.owner !== undefined) set('owner', patch.owner);
     if (patch.supervisor_agent_id !== undefined) set('supervisor_agent_id', patch.supervisor_agent_id);
-    if (patch.provider !== undefined) set('provider', patch.provider);
-    if (patch.model !== undefined) set('model', patch.model);
+    if (patch.provider !== undefined) set('provider', patch.provider);    if (patch.model !== undefined) set('model', patch.model);
     if (patch.status !== undefined) set('status', patch.status);
     if (patch.tools !== undefined) set('tools', JSON.stringify(patch.tools));
     if (patch.permissions !== undefined) set('permissions', JSON.stringify(patch.permissions));
@@ -377,7 +404,36 @@ export class SqliteStorage implements Storage {
     set('updated_at', now());
     vals.push(id);
     this.db.prepare(`UPDATE agents SET ${sets.join(', ')} WHERE id = ?`).run(...vals);
-    return this.getAgent(id);
+    const updated = this.getAgent(id) as Agent;
+    // Audit delegation changes in the event trail (ADR-0003: events are the
+    // audit log). Only fires when the delegation actually changed.
+    const supChanged =
+      patch.supervisor_agent_id !== undefined &&
+      (patch.supervisor_agent_id ?? null) !== (existing.supervisor_agent_id ?? null);
+    const ownerChanged =
+      patch.owner !== undefined && (patch.owner || null) !== (existing.owner || null);
+    if (supChanged || ownerChanged) {
+      const parts: string[] = [];
+      if (supChanged) {
+        parts.push(`supervisor ${existing.supervisor_agent_id ?? 'none'} → ${updated.supervisor_agent_id ?? 'none'}`);
+      }
+      if (ownerChanged) {
+        parts.push(`owner ${existing.owner || 'none'} → ${updated.owner || 'none'}`);
+      }
+      this.appendEventInternal({
+        agent_id: id,
+        type: 'agent.delegated',
+        actor: 'human',
+        summary: `Delegation changed for ${updated.name}: ${parts.join('; ')}`,
+        data: {
+          supervisor_from: existing.supervisor_agent_id,
+          supervisor_to: updated.supervisor_agent_id,
+          owner_from: existing.owner || null,
+          owner_to: updated.owner || null,
+        },
+      });
+    }
+    return updated;
   }
 
   deleteAgent(id: string): boolean {

@@ -198,6 +198,21 @@ async function put(path, body) {
   }
   return r.json();
 }
+
+async function patch(path, body) {
+  const r = await fetch(path, {
+    method: 'PATCH',
+    headers: { 'x-api-key': keyInput.value, 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (r.status === 401) throw new Error('unauthorized — enter the API key from your .env (AGENTOS_DEV_API_KEY)');
+  if (!r.ok) {
+    let detail = '';
+    try { detail = (await r.json()).error || ''; } catch {}
+    throw new Error(detail || ('request failed: ' + r.status));
+  }
+  return r.json();
+}
 const showFormBtn = document.getElementById('show-form');
 showFormBtn.addEventListener('click', () => {
   form.style.display = '';
@@ -302,10 +317,10 @@ async function refreshList() {
     (org.delegation.length
       ? `<div style="margin-bottom:10px"><strong>${org.delegation.length}</strong> agent${org.delegation.length === 1 ? '' : 's'} supervised: ` +
         org.delegation.map(d => `${esc(d.agent_name)} <span style="color:var(--dim)">↳</span> ${d.supervisor_name ? esc(d.supervisor_name) : '<em style="color:var(--warn)">removed agent</em>'}`).join(' · ') + '</div>'
-      : '<p class="hint" style="margin:0 0 10px">No agent → agent supervision set — assign a <code>supervisor_agent_id</code> to build a delegation chain.</p>') +
+      : '<p class="hint" style="margin:0 0 10px">No agent → agent supervision set — open an agent\'s detail page and use the Delegation section to assign a supervisor.</p>') +
     (org.owners.length
       ? `<div style="font-size:13px">` + org.owners.map(o => `<span class="pill" style="margin:0 6px 6px 0" title="${o.agent_ids.length} agent${o.agent_ids.length === 1 ? '' : 's'}">${esc(o.owner)} · ${o.agent_ids.length}</span>`).join('') + '</div>'
-      : '<p class="hint" style="margin:0">No owners set — set an <code>owner</code> on agents to show human → agent delegation.</p>');
+      : '<p class="hint" style="margin:0">No owners set — open an agent\'s detail page and use the Delegation section to set a human owner.</p>');
 
   document.querySelectorAll('.agent-link').forEach(el =>
     el.addEventListener('click', () => showDetail(el.dataset.id)));
@@ -387,6 +402,7 @@ async function decideApproval(id, decision) {
 
 async function refreshDetail() {
   const d = await get(`/api/agents/${encodeURIComponent(detailId)}/detail`);
+  const agents = (await get('/api/agents')).agents || [];
   const a = d.agent, u = d.usage;
   const usageCards = [
     [u.events_total, 'Events (total)'], [u.events_last_24h, 'Events (24h)'],
@@ -433,6 +449,44 @@ async function refreshDetail() {
       : db.status === 'warning' ? 'Over 80% of department pool used' : 'Department pool on track',
   ) : '';
 
+  // Delegation editor (Phase 5): human owner + supervisor assignment. The
+  // server validates every assignment (target exists, no self-supervision,
+  // no cycles) and writes an `agent.delegated` audit event.
+  const supervisor = agents.find(x => x.id === a.supervisor_agent_id);
+  const supOptions = agents.filter(x => x.id !== a.id).map(x =>
+    `<option value="${esc(x.id)}"${x.id === a.supervisor_agent_id ? ' selected' : ''}>${esc(x.name)} — ${esc(x.status)}${x.department ? ' · ' + esc(x.department) : ''}</option>`).join('');
+  const delegationHtml = `
+    <h2>Delegation</h2>
+    <div class="card" style="margin-bottom:20px">
+      <div style="display:grid;gap:12px;max-width:540px">
+        <div>
+          <label for="del-owner" style="font-size:13px;color:var(--dim)">Human owner</label>
+          <div style="display:flex;gap:8px;margin-top:4px;flex-wrap:wrap">
+            <input id="del-owner" type="text" placeholder="e.g. Antonio" value="${esc(a.owner || '')}" aria-label="Human owner" style="flex:1;min-width:160px;background:var(--bg);border:1px solid var(--line);color:var(--txt);padding:7px 10px;border-radius:8px">
+            <button class="btn ghost" id="del-owner-save" style="padding:7px 14px;font-size:13px">Save owner</button>
+            ${a.owner ? '<button class="btn ghost" id="del-owner-clear" style="padding:7px 14px;font-size:13px">Clear</button>' : ''}
+          </div>
+        </div>
+        <div>
+          <label for="del-sup" style="font-size:13px;color:var(--dim)">Reports to (supervisor agent)</label>
+          <div style="display:flex;gap:8px;margin-top:4px;flex-wrap:wrap">
+            <select id="del-sup" aria-label="Supervisor agent" style="flex:1;min-width:160px;background:var(--bg);border:1px solid var(--line);color:var(--txt);padding:7px 10px;border-radius:8px">
+              <option value="">— No supervisor —</option>
+              ${supOptions}
+            </select>
+            <button class="btn ghost" id="del-sup-save" style="padding:7px 14px;font-size:13px">Save supervisor</button>
+          </div>
+          <p class="hint" style="margin:6px 0 0">
+            ${a.supervisor_agent_id
+              ? (supervisor
+                ? `Currently reports to <strong>${esc(supervisor.name)}</strong>.`
+                : '<em style="color:var(--warn)">The supervisor agent was removed — pick a new supervisor or leave it unset.</em>')
+              : 'No supervisor set — this agent answers only to its human owner.'}
+            Supervisors may grant/deny approvals for the agents they supervise.</p>
+        </div>
+      </div>
+    </div>`;
+
   document.getElementById('detail').innerHTML = `
     <h2 style="margin-top:8px">${esc(a.name)} <span class="pill ${esc(a.status)}">${esc(a.status)}</span></h2>
     <p style="color:var(--dim)">${esc(a.description) || ''}</p>
@@ -448,6 +502,7 @@ async function refreshDetail() {
     <div class="cards">${usageCards}</div>
     <h2>Identity</h2>
     <div class="kv">${identity}</div>
+    ${delegationHtml}
     ${budgetCard}
     ${deptCard}
     <h2>Pending approvals</h2>
@@ -471,6 +526,25 @@ async function refreshDetail() {
     btn.addEventListener('click', () => decideApproval(btn.dataset.id, btn.dataset.decide)));
   document.querySelectorAll('[data-lifecycle]').forEach(btn =>
     btn.addEventListener('click', () => lifecycleAction(btn.dataset.lifecycle)));
+  document.getElementById('del-owner-save').addEventListener('click', () => {
+    const v = document.getElementById('del-owner').value.trim();
+    saveDelegation({ owner: v || null });
+  });
+  const delOwnerClear = document.getElementById('del-owner-clear');
+  if (delOwnerClear) delOwnerClear.addEventListener('click', () => saveDelegation({ owner: null }));
+  document.getElementById('del-sup-save').addEventListener('click', () => {
+    saveDelegation({ supervisor_agent_id: document.getElementById('del-sup').value || null });
+  });
+}
+
+async function saveDelegation(body) {
+  try {
+    document.getElementById('err').textContent = '';
+    await patch(`/api/agents/${encodeURIComponent(detailId)}`, body);
+    await refreshDetail();
+  } catch (e) {
+    document.getElementById('err').textContent = e.message;
+  }
 }
 
 async function lifecycleAction(action) {
