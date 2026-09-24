@@ -58,7 +58,36 @@ interface ApiJson {
   providers?: Array<{ id: string; has_credential?: boolean }>;
   provider?: { id: string; has_credential: boolean; credential?: string };
   total_agents?: number;
-  budget?: { limit_usd: number; spend_month_usd: number; pct_used: number; status: string } | null;
+  budget?: {
+    limit_usd: number;
+    spend_month_usd: number;
+    pct_used: number;
+    status: string;
+    department?: string;
+    agent_count?: number;
+  } | null;
+  department_budget?: {
+    department: string;
+    limit_usd: number;
+    spend_month_usd: number;
+    agent_count: number;
+    pct_used: number;
+    status: string;
+  } | null;
+  departments?: Array<{
+    name: string;
+    agent_count: number;
+    budget: {
+      department: string;
+      limit_usd: number;
+      spend_month_usd: number;
+      agent_count: number;
+      pct_used: number;
+      status: string;
+    } | null;
+  }>;
+  reason?: string;
+  department?: string;
   agents_by_status?: Record<string, number>;
   events_last_24h?: number;
   pending_approvals?: number;
@@ -485,7 +514,7 @@ test('approvals: validation fails closed', async () => {
   const id = req(requested.json.approval, 'approval').id;
   const noDecider = await api('POST', `/api/approvals/${id}/grant`, {});
   assert.equal(noDecider.status, 400);
-  assert.match(req(noDecider.json.error, 'error'), /decided_by is required/);
+  assert.match(req(noDecider.json.error, 'error'), /exactly one of decided_by/);
 
   const unknownId = await api('POST', '/api/approvals/nope/grant', { decided_by: 'antonio@example.com' });
   assert.equal(unknownId.status, 404);
@@ -606,4 +635,248 @@ test('costs: non-finite cost is rejected at the store level (400)', async () => 
       (err: unknown) => err instanceof ValidationError && /cost_usd/.test(err.message),
     );
   }
+});
+
+test('autonomy: L0 agent invoke is blocked (403) with policy.blocked audit', async () => {
+  const providerId = await createOllamaProvider('http://localhost:1'); // unreachable — gate runs before any network call
+  const created = await api('POST', '/api/agents', { name: 'L0 Monitored Agent', autonomy_level: 0 });
+  const aid = req(created.json.agent, 'agent').id;
+  const { status, json } = await api('POST', `/api/providers/${providerId}/invoke`, {
+    agent_id: aid,
+    model: 'x',
+    messages: [{ role: 'user', content: 'hi' }],
+  });
+  assert.equal(status, 403);
+  assert.match(req(json.error, 'error'), /L0/);
+  const detail = await api('GET', `/api/agents/${aid}/detail`);
+  assert.equal(req(detail.json.usage, 'usage').events_by_type['policy.blocked'], 1);
+});
+
+test('autonomy: L1 invoke needs a human grant inside 24h; then passes the gate', async () => {
+  const providerId = await createOllamaProvider('http://localhost:1'); // unreachable — 502 means the gate passed
+  const created = await api('POST', '/api/agents', { name: 'L1 Supervised Agent', autonomy_level: 1 });
+  const aid = req(created.json.agent, 'agent').id;
+  const invoke = () =>
+    api('POST', `/api/providers/${providerId}/invoke`, {
+      agent_id: aid,
+      model: 'x',
+      messages: [{ role: 'user', content: 'hi' }],
+    });
+
+  const blocked = await invoke();
+  assert.equal(blocked.status, 403);
+  assert.match(req(blocked.json.error, 'error'), /POST \/api\/approvals/);
+
+  const req1 = await api('POST', '/api/approvals', { agent_id: aid, title: 'Invoke for weekly summary' });
+  const approvalId = req(req1.json.approval, 'approval').id;
+  const grant = await api('POST', `/api/approvals/${approvalId}/grant`, { decided_by: 'ops@example.com' });
+  assert.equal(grant.status, 200);
+
+  const passthrough = await invoke();
+  assert.equal(passthrough.status, 502); // gate passed; failure is the unreachable mock daemon
+});
+
+test('autonomy: L2 invoke clamps max_tokens to 1024 and reports it', async () => {
+  const providerId = await createOllamaProvider(mockBase);
+  const created = await api('POST', '/api/agents', { name: 'L2 Assisted Agent', autonomy_level: 2 });
+  const aid = req(created.json.agent, 'agent').id;
+  const { status, json } = await api('POST', `/api/providers/${providerId}/invoke`, {
+    agent_id: aid,
+    model: 'llama3.2:latest',
+    messages: [{ role: 'user', content: 'hi' }],
+    max_tokens: 5000,
+  });
+  assert.equal(status, 200);
+  const policy = (json as { policy?: { max_tokens_clamped?: boolean; max_tokens_effective?: number } }).policy;
+  assert.equal(req(policy, 'policy').max_tokens_clamped, true);
+  assert.equal(req(policy, 'policy').max_tokens_effective, 1024);
+});
+
+test('autonomy: L5 supervisor can grant/deny for supervised agents; others cannot', async () => {
+  const sup = await api('POST', '/api/agents', { name: 'Ops Supervisor', autonomy_level: 5 });
+  const supId = req(sup.json.agent, 'agent').id;
+  const worker = await api('POST', '/api/agents', {
+    name: 'Supervised Worker',
+    autonomy_level: 1,
+    supervisor_agent_id: supId,
+  });
+  const workerId = req(worker.json.agent, 'agent').id;
+  const loner = await api('POST', '/api/agents', { name: 'Unsupervised Agent', autonomy_level: 1 });
+  const lonerId = req(loner.json.agent, 'agent').id;
+  const notSup = await api('POST', '/api/agents', { name: 'Junior Agent', autonomy_level: 2 });
+  const notSupId = req(notSup.json.agent, 'agent').id;
+
+  const mkReq = (agent_id: string) => api('POST', '/api/approvals', { agent_id, title: 'Do the thing' });
+
+  // Supervisor grants for its supervised agent — decided_by recorded as agent:<id>.
+  const r1 = await mkReq(workerId);
+  const g1 = await api('POST', `/api/approvals/${req(r1.json.approval, 'a').id}/grant`, { decided_by_agent_id: supId });
+  assert.equal(g1.status, 200);
+  assert.equal(req(g1.json.approval, 'a').decided_by, `agent:${supId}`);
+
+  // Same supervisor denies for its supervised agent.
+  const r2 = await mkReq(workerId);
+  const d1 = await api('POST', `/api/approvals/${req(r2.json.approval, 'a').id}/deny`, {
+    decided_by_agent_id: supId,
+    reason: 'too risky',
+  });
+  assert.equal(d1.status, 200);
+  assert.equal(req(d1.json.approval, 'a').status, 'denied');
+
+  // Non-L5 agent cannot decide, even with an explicit id.
+  const r3 = await mkReq(workerId);
+  const bad1 = await api('POST', `/api/approvals/${req(r3.json.approval, 'a').id}/grant`, {
+    decided_by_agent_id: notSupId,
+  });
+  assert.equal(bad1.status, 400);
+  assert.match(req(bad1.json.error, 'error'), /L5/);
+
+  // L5 supervisor cannot decide for an agent it does not supervise.
+  const r4 = await mkReq(lonerId);
+  const bad2 = await api('POST', `/api/approvals/${req(r4.json.approval, 'a').id}/grant`, {
+    decided_by_agent_id: supId,
+  });
+  assert.equal(bad2.status, 400);
+  assert.match(req(bad2.json.error, 'error'), /supervise/);
+
+  // Both decider fields at once, or neither, is rejected.
+  const r5 = await mkReq(workerId);
+  const bad3 = await api('POST', `/api/approvals/${req(r5.json.approval, 'a').id}/grant`, {
+    decided_by: 'ops@example.com',
+    decided_by_agent_id: supId,
+  });
+  assert.equal(bad3.status, 400);
+  const bad4 = await api('POST', `/api/approvals/${req(r5.json.approval, 'a').id}/grant`, {});
+  assert.equal(bad4.status, 400);
+});
+
+test('autonomy: human grant/deny flow is unchanged', async () => {
+  const created = await api('POST', '/api/agents', { name: 'Human Flow Agent' });
+  const aid = req(created.json.agent, 'agent').id;
+  const req1 = await api('POST', '/api/approvals', { agent_id: aid, title: 'Send the invoice' });
+  const approvalId = req(req1.json.approval, 'approval').id;
+  const grant = await api('POST', `/api/approvals/${approvalId}/grant`, { decided_by: 'ops@example.com' });
+  assert.equal(grant.status, 200);
+  assert.equal(req(grant.json.approval, 'a').decided_by, 'ops@example.com');
+});
+
+test('department budgets: set → state → clear', async () => {
+  const a1 = await api('POST', '/api/agents', { name: 'Sales Agent 1', department: 'Sales' });
+  await api('POST', '/api/agents', { name: 'Sales Agent 2', department: 'Sales' });
+  const aid1 = req(a1.json.agent, 'agent').id;
+
+  // No budget yet: state endpoint 404s, list shows null meter.
+  const missing = await api('GET', '/api/departments/Sales/budget');
+  assert.equal(missing.status, 404);
+  const listed = await api('GET', '/api/departments');
+  const sales = req(listed.json.departments, 'departments').find((d) => d.name === 'Sales');
+  assert.ok(sales);
+  assert.equal(sales.agent_count, 2);
+  assert.equal(sales.budget, null);
+
+  const set = await api('PUT', '/api/departments/Sales/budget', { budget_monthly_usd: 10 });
+  assert.equal(set.status, 200);
+  const b = req((set.json as ApiJson).budget, 'budget');
+  assert.equal(b.limit_usd, 10);
+  assert.equal(b.spend_month_usd, 0);
+  assert.equal(b.agent_count, 2);
+  assert.equal(b.status, 'ok');
+
+  const detail = await api('GET', `/api/agents/${aid1}/detail`);
+  const db = req((detail.json as ApiJson).department_budget, 'department_budget');
+  assert.equal(db.department, 'Sales');
+  assert.equal(db.limit_usd, 10);
+  assert.equal((detail.json as ApiJson).budget, null); // personal budget untouched
+
+  const cleared = await api('PUT', '/api/departments/Sales/budget', { budget_monthly_usd: null });
+  assert.equal(cleared.status, 200);
+  assert.equal((cleared.json as ApiJson).budget, null);
+  const gone = await api('GET', '/api/departments/Sales/budget');
+  assert.equal(gone.status, 404);
+});
+
+test('department budgets: validation fails closed', async () => {
+  for (const bad of [-5, 'abc', true]) {
+    const r = await api('PUT', '/api/departments/Research/budget', { budget_monthly_usd: bad });
+    assert.equal(r.status, 400, `expected 400 for ${JSON.stringify(bad)}`);
+    assert.match(req(r.json.error, 'error'), /budget_monthly_usd/);
+  }
+  // The rejected writes must not have left a budget behind.
+  const check = await api('GET', '/api/departments/Research/budget');
+  assert.equal(check.status, 404);
+});
+
+test('department budgets: shared pool sums across agents; alerts edge-triggered on the triggering agent', async () => {
+  const a1 = await api('POST', '/api/agents', { name: 'Dept Pool Agent 1', department: 'PoolDept' });
+  const a2 = await api('POST', '/api/agents', { name: 'Dept Pool Agent 2', department: 'PoolDept' });
+  const aid1 = req(a1.json.agent, 'agent').id;
+  const aid2 = req(a2.json.agent, 'agent').id;
+  await api('PUT', '/api/departments/PoolDept/budget', { budget_monthly_usd: 1.0 });
+
+  const call = (id: string, cost: number) =>
+    api('POST', '/api/events', { agent_id: id, type: 'model.called', cost_usd: cost, summary: `call $${cost}` });
+  const countsOf = async (id: string) => {
+    const detail = await api('GET', `/api/agents/${id}/detail`);
+    return req((detail.json as ApiJson).usage, 'usage').events_by_type;
+  };
+  const deptState = async () => {
+    const r = await api('GET', '/api/departments/PoolDept/budget');
+    assert.equal(r.status, 200);
+    return req((r.json as ApiJson).budget, 'budget');
+  };
+
+  await call(aid1, 0.5); // 50% — no alert
+  let st = await deptState();
+  assert.equal(st.status, 'ok');
+  assert.equal(st.spend_month_usd, 0.5);
+  assert.equal(st.agent_count, 2);
+  assert.equal((await countsOf(aid1))['department.budget.warning'] ?? 0, 0);
+
+  await call(aid2, 0.3); // 80% — warning lands on the triggering agent (aid2)
+  st = await deptState();
+  assert.equal(st.status, 'warning');
+  assert.equal(st.spend_month_usd, 0.8);
+  assert.equal((await countsOf(aid2))['department.budget.warning'], 1);
+  assert.equal((await countsOf(aid1))['department.budget.warning'] ?? 0, 0);
+  // Per-agent budget alerts must not be contaminated by the department alert.
+  assert.equal((await countsOf(aid2))['budget.warning'] ?? 0, 0);
+
+  await call(aid1, 0.3); // 110% — exceeded fires on aid1, exactly once
+  st = await deptState();
+  assert.equal(st.status, 'exceeded');
+  assert.equal((await countsOf(aid1))['department.budget.exceeded'], 1);
+
+  await call(aid2, 0.1); // more spend — no duplicate exceeded anywhere
+  assert.equal((await countsOf(aid1))['department.budget.exceeded'], 1);
+  assert.equal((await countsOf(aid2))['department.budget.exceeded'] ?? 0, 0);
+});
+
+test('department budgets: invoke blocked at department cap (403, reason department_budget_exceeded)', async () => {
+  const providerId = await createOllamaProvider('http://localhost:1'); // unreachable — gate runs before any network call
+  // $0 department cap = spend nothing: the shared pool is exceeded immediately.
+  await api('PUT', '/api/departments/SupportDept/budget', { budget_monthly_usd: 0 });
+  const created = await api('POST', '/api/agents', { name: 'Support Agent', department: 'SupportDept' });
+  const aid = req(created.json.agent, 'agent').id;
+  const invoke = (id: string) =>
+    api('POST', `/api/providers/${providerId}/invoke`, {
+      agent_id: id,
+      model: 'x',
+      messages: [{ role: 'user', content: 'hi' }],
+    });
+
+  const blocked = await invoke(aid);
+  assert.equal(blocked.status, 403);
+  assert.equal((blocked.json as ApiJson).reason, 'department_budget_exceeded');
+  assert.equal((blocked.json as ApiJson).department, 'SupportDept');
+  assert.match(req((blocked.json as ApiJson).error, 'error'), /department/);
+  const detail = await api('GET', `/api/agents/${aid}/detail`);
+  const counts = req((detail.json as ApiJson).usage, 'usage').events_by_type;
+  assert.equal(counts['policy.blocked'], 1);
+  assert.equal(counts['department.budget.exceeded'], 1); // alert made the audit trail even without a spend event
+
+  // Department with headroom: the agent sails through (502 = gate passed, unreachable daemon).
+  await api('PUT', '/api/departments/OpenDept/budget', { budget_monthly_usd: 100 });
+  const created2 = await api('POST', '/api/agents', { name: 'Open Agent', department: 'OpenDept' });
+  const passthrough = await invoke(req(created2.json.agent, 'agent').id);
+  assert.equal(passthrough.status, 502);
 });

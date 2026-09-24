@@ -10,6 +10,7 @@ import { createServer, IncomingMessage, ServerResponse } from 'node:http';
 import { scryptSync, timingSafeEqual } from 'node:crypto';
 import { openStorage, Storage, ValidationError } from './store.js';
 import { adapterFor, NotImplementedError } from './providers.js';
+import { checkInvokePolicy, effectiveMaxTokens } from './policy.js';
 import type { InvokeRequest, ApprovalStatus } from '@control-plane/types';
 
 const PORT = Number(process.env.API_PORT ?? 4000);
@@ -192,6 +193,30 @@ export function createApp(storage: Storage) {
           return { role: role as 'system' | 'user' | 'assistant', content };
         });
         if (!storage.getAgent(body.agent_id)) throw new ValidationError(`unknown agent_id: ${body.agent_id}`);
+        const agent = storage.getAgent(body.agent_id) as NonNullable<ReturnType<typeof storage.getAgent>>;
+        // Autonomy gate (ADR-0006): an agent's level is enforced server-side
+        // BEFORE the budget gate — L0/L1 invokes never reach a provider.
+        // Fails closed with a policy.blocked audit event.
+        const policy = checkInvokePolicy(agent, storage);
+        if (!policy.allowed) {
+          storage.appendServerEvent({
+            agent_id: body.agent_id,
+            type: 'policy.blocked',
+            actor: 'system',
+            summary: `Model invoke blocked: ${policy.error}`,
+            data: { action: 'provider.invoke', reason: policy.reason, autonomy_level: agent.autonomy_level },
+          });
+          return send(res, 403, {
+            error: policy.error,
+            reason: policy.reason,
+            autonomy_level: agent.autonomy_level,
+          });
+        }
+        // L2 guardrail (ADR-0006): clamp max_tokens server-side for assisted agents.
+        const { value: effectiveMaxTokensValue, clamped: maxTokensClamped } = effectiveMaxTokens(
+          agent,
+          typeof body.max_tokens === 'number' ? body.max_tokens : undefined,
+        );
         // Budget gate: an agent at/over its monthly budget cannot invoke models
         // through the control plane. Checked BEFORE the provider is touched so
         // no cost can be incurred. Fails closed with a policy.blocked audit event.
@@ -210,6 +235,28 @@ export function createApp(storage: Storage) {
             budget,
           });
         }
+        // Department budget gate (ADR-0007): a department's shared monthly pool
+        // is a hard money cap — an agent in an exceeded department cannot invoke
+        // models through the control plane. Checked BEFORE the provider is
+        // touched so no cost can be incurred. Fails closed with a
+        // policy.blocked audit event.
+        const deptBudget = agent.department ? storage.departmentBudgetState(agent.department) : null;
+        if (deptBudget && deptBudget.status === 'exceeded') {
+          storage.checkDepartmentBudget(agent.department, body.agent_id); // make sure budget.exceeded is on the trail
+          storage.appendServerEvent({
+            agent_id: body.agent_id,
+            type: 'policy.blocked',
+            actor: 'system',
+            summary: `Model invoke blocked: department budget "${agent.department}" $${deptBudget.limit_usd.toFixed(2)} exceeded ($${deptBudget.spend_month_usd.toFixed(2)} spent)`,
+            data: { action: 'provider.invoke', reason: 'department_budget_exceeded', department: agent.department, budget: deptBudget },
+          });
+          return send(res, 403, {
+            error: `department monthly budget exceeded: model invokes are blocked for agents in "${agent.department}"`,
+            reason: 'department_budget_exceeded',
+            department: agent.department,
+            budget: deptBudget,
+          });
+        }
         let adapter;
         try {
           adapter = adapterFor(provider);
@@ -220,7 +267,7 @@ export function createApp(storage: Storage) {
         const invokeReq: InvokeRequest = {
           model: body.model,
           messages,
-          ...(typeof body.max_tokens === 'number' ? { max_tokens: body.max_tokens } : {}),
+          ...(typeof effectiveMaxTokensValue === 'number' ? { max_tokens: effectiveMaxTokensValue } : {}),
         };
         let result;
         try {
@@ -252,6 +299,11 @@ export function createApp(storage: Storage) {
           latency_ms: result.latency_ms,
           model: result.model,
           event,
+          policy: {
+            autonomy_level: agent.autonomy_level,
+            max_tokens_clamped: maxTokensClamped,
+            ...(maxTokensClamped ? { max_tokens_effective: effectiveMaxTokensValue } : {}),
+          },
         });
       }
 
@@ -286,16 +338,38 @@ export function createApp(storage: Storage) {
       const decisionMatch = path.match(/^\/api\/approvals\/([^/]+)\/(grant|deny)$/);
       if (decisionMatch && method === 'POST') {
         const id = decodeURIComponent(decisionMatch[1]);
-        const body = (await readJson(req)) as { decided_by?: unknown; reason?: unknown };
-        if (typeof body.decided_by !== 'string' || !body.decided_by.trim()) {
-          throw new ValidationError('decided_by is required — record which human decided');
-        }
+        const body = (await readJson(req)) as { decided_by?: unknown; decided_by_agent_id?: unknown; reason?: unknown };
+        // ADR-0006: exactly one decider — a human (decided_by) or an L5
+        // supervisor agent (decided_by_agent_id). Validated in the store.
         const approval = storage.decideApproval(id, {
           decision: (decisionMatch[2] === 'grant' ? 'granted' : 'denied') as 'granted' | 'denied',
-          decided_by: body.decided_by,
+          ...(typeof body.decided_by === 'string' ? { decided_by: body.decided_by } : {}),
+          ...(typeof body.decided_by_agent_id === 'string' ? { decided_by_agent_id: body.decided_by_agent_id } : {}),
           ...(typeof body.reason === 'string' && body.reason ? { reason: body.reason } : {}),
         });
         return approval ? send(res, 200, { approval }) : send(res, 404, { error: 'approval request not found' });
+      }
+
+      // --- departments --------------------------------------------------
+      if (path === '/api/departments' && method === 'GET') {
+        return send(res, 200, { departments: storage.listDepartments() });
+      }
+      const deptBudgetMatch = path.match(/^\/api\/departments\/([^/]+)\/budget$/);
+      if (deptBudgetMatch) {
+        const deptName = decodeURIComponent(deptBudgetMatch[1]);
+        if (method === 'GET') {
+          const budget = storage.departmentBudgetState(deptName);
+          return budget ? send(res, 200, { budget }) : send(res, 404, { error: 'no budget set for this department' });
+        }
+        if (method === 'PUT') {
+          const body = (await readJson(req)) as { budget_monthly_usd?: unknown };
+          // Fail-closed validation (finite, non-negative, or null to clear)
+          // happens in the store; unknown/missing clears.
+          const budget = storage.setDepartmentBudget(deptName, {
+            budget_monthly_usd: (body.budget_monthly_usd ?? null) as number | null,
+          });
+          return send(res, 200, { ok: true, budget });
+        }
       }
 
       // --- dashboard ----------------------------------------------------

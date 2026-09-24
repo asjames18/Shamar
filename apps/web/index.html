@@ -28,6 +28,7 @@
   .pill.paused { color:var(--warn); border-color:var(--warn); }
   .pill.error { color:var(--err); border-color:var(--err); }
   .pill.idle,.pill.retired { color:var(--dim); }
+  .autonomy-badge { display:inline-block; padding:2px 10px; border-radius:999px; font-size:12px; border:1px solid var(--accent); color:var(--accent); cursor:help; }
   #err { color:var(--err); margin:12px 0; min-height:20px; }
   code { background:#0a0f1c; padding:2px 6px; border-radius:6px; font-size:13px; }
   .hint { color:var(--dim); font-size:13px; margin-top:18px; }
@@ -88,6 +89,17 @@
       <tbody id="agents"><tr><td colspan="5">—</td></tr></tbody>
     </table>
 
+    <h2>Department budgets</h2>
+    <div class="card" style="margin-bottom:14px">
+      <div class="form-actions" style="flex-wrap:wrap">
+        <input id="nd-name" placeholder="Department" aria-label="Department" style="width:200px;background:var(--bg);border:1px solid var(--line);color:var(--txt);padding:8px 10px;border-radius:8px">
+        <input id="nd-cap" type="number" min="0" step="0.01" placeholder="Monthly cap $" aria-label="Monthly cap in USD" style="width:150px;background:var(--bg);border:1px solid var(--line);color:var(--txt);padding:8px 10px;border-radius:8px">
+        <button class="btn" id="nd-set" style="font-size:13px">Set budget</button>
+      </div>
+      <div class="hint" style="margin-top:8px">A department's pool is shared across its agents: spend sums across member agents each month, and when the pool exceeds its cap, invokes are blocked for the whole department. Leave a department without a cap and only per-agent budgets apply.</div>
+    </div>
+    <div class="cards" id="dept-budgets"></div>
+
     <h2>Recent activity</h2>
     <table>
       <thead><tr><th>When</th><th>Event</th><th>Summary</th></tr></thead>
@@ -122,6 +134,25 @@ const fmtDur = ms => { if (ms == null) return '—'; if (ms < 1000) return ms + 
   if (ms < 60000) return (ms/1000).toFixed(1) + 's'; return (ms/60000).toFixed(1) + 'm'; };
 const fmtNum = n => n == null ? '—' : Number(n).toLocaleString();
 
+// Shared budget meter (agent or department pool): colored bar + status label.
+function budgetMeterHtml(title, b, note, labelOverride) {
+  const pct = Math.min(100, Math.round(b.pct_used * 100));
+  const color = b.status === 'exceeded' ? 'var(--err)' : b.status === 'warning' ? 'var(--warn)' : 'var(--ok)';
+  const label = labelOverride || (b.status === 'exceeded' ? 'Budget exceeded — model invokes are blocked'
+    : b.status === 'warning' ? 'Budget warning — over 80% used' : 'Budget on track');
+  return `<div class="card" style="border-left:3px solid ${color};margin-bottom:18px">
+    <div class="l" style="color:var(--dim);font-size:12px;text-transform:uppercase;letter-spacing:.6px">${title}</div>
+    <div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:6px;margin:6px 0 10px">
+      <div style="font-size:20px;font-weight:700">$${Number(b.spend_month_usd).toFixed(2)} <span style="color:var(--dim);font-weight:400;font-size:14px">of $${Number(b.limit_usd).toFixed(2)}</span></div>
+      <div style="color:${color};font-weight:700;font-size:14px">${label}</div>
+    </div>
+    <div style="background:var(--line);border-radius:999px;height:10px;overflow:hidden">
+      <div style="width:${pct}%;height:100%;background:${color};border-radius:999px;transition:width .4s"></div>
+    </div>
+    ${note ? `<div class="hint" style="margin-top:8px">${note}</div>` : ''}
+  </div>`;
+}
+
 let detailId = null; // when set, the detail view is active and auto-refreshes
 
 async function get(path) {
@@ -130,6 +161,8 @@ async function get(path) {
   if (!r.ok) throw new Error('request failed: ' + r.status);
   return r.json();
 }
+
+const form = document.getElementById('agent-form');
 
 async function post(path, body) {
   const r = await fetch(path, {
@@ -146,7 +179,20 @@ async function post(path, body) {
   return r.json();
 }
 
-const form = document.getElementById('agent-form');
+async function put(path, body) {
+  const r = await fetch(path, {
+    method: 'PUT',
+    headers: { 'x-api-key': keyInput.value, 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (r.status === 401) throw new Error('unauthorized — enter the API key from your .env (AGENTOS_DEV_API_KEY)');
+  if (!r.ok) {
+    let detail = '';
+    try { detail = (await r.json()).error || ''; } catch {}
+    throw new Error(detail || ('request failed: ' + r.status));
+  }
+  return r.json();
+}
 const showFormBtn = document.getElementById('show-form');
 showFormBtn.addEventListener('click', () => {
   form.style.display = '';
@@ -183,7 +229,10 @@ form.addEventListener('submit', async (e) => {
 });
 
 async function refreshList() {
-  const [sum, agents, pending] = await Promise.all([get('/api/dashboard/summary'), get('/api/agents'), get('/api/approvals?status=pending')]);
+  const [sum, agents, pending, depts] = await Promise.all([
+    get('/api/dashboard/summary'), get('/api/agents'),
+    get('/api/approvals?status=pending'), get('/api/departments'),
+  ]);
   document.getElementById('cards').innerHTML = [
     [sum.total_agents, 'Total agents'], [sum.active_agents, 'Active'],
     [sum.events_last_24h, 'Events (24h)'],
@@ -211,7 +260,69 @@ async function refreshList() {
 
   document.querySelectorAll('.agent-link').forEach(el =>
     el.addEventListener('click', () => showDetail(el.dataset.id)));
+
+  // Department budget pools: meter per department + inline set/clear.
+  document.getElementById('dept-budgets').innerHTML = depts.departments.map(d => {
+    const b = d.budget;
+    const pct = b ? Math.min(100, Math.round(b.pct_used * 100)) : 0;
+    const color = b ? (b.status === 'exceeded' ? 'var(--err)' : b.status === 'warning' ? 'var(--warn)' : 'var(--ok)') : 'var(--line)';
+    const label = b ? (b.status === 'exceeded' ? 'Pool exceeded — invokes blocked'
+      : b.status === 'warning' ? 'Over 80% of pool used' : 'Pool on track') : 'No budget cap set';
+    return `<div class="card"${b && b.status === 'exceeded' ? ' style="border-left:3px solid var(--err)"' : ''}>
+      <div class="l">${esc(d.name)} · ${d.agent_count} agent${d.agent_count === 1 ? '' : 's'}</div>
+      <div style="display:flex;justify-content:space-between;align-items:baseline;gap:6px;margin:6px 0 8px">
+        <div style="font-size:17px;font-weight:700">${b ? `$${Number(b.spend_month_usd).toFixed(2)} <span style="color:var(--dim);font-weight:400;font-size:13px">of $${Number(b.limit_usd).toFixed(2)}</span>` : '—'}</div>
+        <div style="color:${b ? color : 'var(--dim)'};font-weight:700;font-size:13px">${label}</div>
+      </div>
+      ${b ? `<div style="background:var(--line);border-radius:999px;height:8px;overflow:hidden;margin-bottom:10px">
+        <div style="width:${pct}%;height:100%;background:${color};border-radius:999px"></div>
+      </div>` : ''}
+      <div class="form-actions" style="flex-wrap:wrap">
+        <input data-dept-input="${esc(d.name)}" type="number" min="0" step="0.01" placeholder="Monthly cap $" aria-label="Monthly cap for ${esc(d.name)}" value="${b ? b.limit_usd : ''}" style="width:120px;background:var(--bg);border:1px solid var(--line);color:var(--txt);padding:7px 10px;border-radius:8px">
+        <button class="btn ghost" data-dept-save="${esc(d.name)}" style="padding:7px 12px;font-size:13px">Set</button>
+        ${b ? `<button class="btn ghost" data-dept-clear="${esc(d.name)}" style="padding:7px 12px;font-size:13px">Clear</button>` : ''}
+      </div>
+    </div>`;
+  }).join('') || '<p class="hint" style="margin-top:0">No departments yet — register an agent with a department, or set a budget for a department name above.</p>';
+
+  document.querySelectorAll('[data-dept-save]').forEach(btn =>
+    btn.addEventListener('click', async () => {
+      const name = btn.getAttribute('data-dept-save');
+      const input = document.querySelector(`[data-dept-input="${CSS.escape(name)}"]`);
+      const raw = input.value.trim();
+      if (!raw) { document.getElementById('err').textContent = 'Enter a monthly cap amount, or use Clear to remove the budget.'; return; }
+      const amount = Number(raw);
+      if (!Number.isFinite(amount) || amount < 0) { document.getElementById('err').textContent = 'Budget must be a non-negative number.'; return; }
+      try {
+        document.getElementById('err').textContent = '';
+        await put(`/api/departments/${encodeURIComponent(name)}/budget`, { budget_monthly_usd: amount });
+        await refreshList();
+      } catch (e) { document.getElementById('err').textContent = e.message; }
+    }));
+  document.querySelectorAll('[data-dept-clear]').forEach(btn =>
+    btn.addEventListener('click', async () => {
+      try {
+        document.getElementById('err').textContent = '';
+        await put(`/api/departments/${encodeURIComponent(btn.getAttribute('data-dept-clear'))}/budget`, { budget_monthly_usd: null });
+        await refreshList();
+      } catch (e) { document.getElementById('err').textContent = e.message; }
+    }));
 }
+
+document.getElementById('nd-set').addEventListener('click', async () => {
+  const name = document.getElementById('nd-name').value.trim();
+  const raw = document.getElementById('nd-cap').value.trim();
+  if (!name) { document.getElementById('err').textContent = 'Enter a department name.'; return; }
+  const amount = Number(raw);
+  if (!raw || !Number.isFinite(amount) || amount < 0) { document.getElementById('err').textContent = 'Enter a non-negative monthly cap amount.'; return; }
+  try {
+    document.getElementById('err').textContent = '';
+    await put(`/api/departments/${encodeURIComponent(name)}/budget`, { budget_monthly_usd: amount });
+    document.getElementById('nd-name').value = '';
+    document.getElementById('nd-cap').value = '';
+    await refreshList();
+  } catch (e) { document.getElementById('err').textContent = e.message; }
+});
 
 async function decideApproval(id, decision) {
   const decided_by = prompt('Your name or email (recorded as the decider):');
@@ -235,12 +346,21 @@ async function refreshDetail() {
     [fmtNum(u.tokens_in_total), 'Tokens in'], [fmtNum(u.tokens_out_total), 'Tokens out'],
   ].map(([n, l]) => `<div class="card"><div class="n">${n}</div><div class="l">${l}</div></div>`).join('');
 
+  const autonomyInfo = {
+    0: ['Monitored', 'Observed through Shamar — model invokes are blocked.'],
+    1: ['Supervised', 'Invokes only with a human approval granted in the last 24h.'],
+    2: ['Assisted', 'Invokes allowed — max_tokens clamped to 1024.'],
+    3: ['Standard', 'Invokes allowed within budget.'],
+    4: ['Trusted', 'Invokes allowed within budget — trusted to act.'],
+    5: ['Supervisor', 'Invokes allowed — may decide approvals for supervised agents.'],
+  }[a.autonomy_level] || ['L' + a.autonomy_level, ''];
+  const autonomyBadge = `<span class="autonomy-badge" title="${esc(autonomyInfo[1])}">L${a.autonomy_level} · ${esc(autonomyInfo[0])}</span>`;
   const identity = [
     ['Owner', a.owner || '—'], ['Department', a.department || '—'],
     ['Provider', a.provider || '—'], ['Model', a.model || '—'],
-    ['Autonomy', 'L' + a.autonomy_level], ['Budget (monthly)', a.budget_monthly_usd != null ? '$' + a.budget_monthly_usd : '—'],
+    ['Autonomy', autonomyBadge], ['Budget (monthly)', a.budget_monthly_usd != null ? '$' + a.budget_monthly_usd : '—'],
     ['Tools', (a.tools || []).join(', ') || '—'], ['Permissions', (a.permissions || []).join(', ') || '—'],
-  ].map(([k, v]) => `<div><span class="k">${esc(k)}</span>${esc(v)}</div>`).join('');
+  ].map(([k, v]) => `<div><span class="k">${esc(k)}</span>${k === 'Autonomy' ? v : esc(v)}</div>`).join('');
 
   const timeline = d.recent_events.map(e => `
     <tr><td>${ago(e.occurred_at)}</td><td><code>${esc(e.type)}</code></td>
@@ -249,23 +369,20 @@ async function refreshDetail() {
   ).join('') || '<tr><td colspan="6">No events yet.</td></tr>';
 
   const b = d.budget;
-  const budgetCard = b ? (() => {
-    const pct = Math.min(100, Math.round(b.pct_used * 100));
-    const color = b.status === 'exceeded' ? 'var(--err)' : b.status === 'warning' ? 'var(--warn)' : 'var(--ok)';
-    const label = b.status === 'exceeded' ? 'Budget exceeded — model invokes are blocked'
-      : b.status === 'warning' ? 'Budget warning — over 80% used' : 'Budget on track';
-    return `<div class="card" style="border-left:3px solid ${color};margin-bottom:18px">
-      <div class="l" style="color:var(--dim);font-size:12px;text-transform:uppercase;letter-spacing:.6px">Monthly budget</div>
-      <div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:6px;margin:6px 0 10px">
-        <div style="font-size:20px;font-weight:700">$${Number(b.spend_month_usd).toFixed(2)} <span style="color:var(--dim);font-weight:400;font-size:14px">of $${Number(b.limit_usd).toFixed(2)}</span></div>
-        <div style="color:${color};font-weight:700;font-size:14px">${label}</div>
-      </div>
-      <div style="background:var(--line);border-radius:999px;height:10px;overflow:hidden">
-        <div style="width:${pct}%;height:100%;background:${color};border-radius:999px;transition:width .4s"></div>
-      </div>
-      <div class="hint" style="margin-top:8px">Spend counts only real reported costs this month — unknown costs are never estimated.</div>
-    </div>`;
-  })() : '';
+  const budgetCard = b ? budgetMeterHtml(
+    'Monthly budget',
+    b,
+    'Spend counts only real reported costs this month — unknown costs are never estimated.',
+  ) : '';
+
+  const db = d.department_budget;
+  const deptCard = db ? budgetMeterHtml(
+    `Department pool — ${esc(db.department)}`,
+    db,
+    `${db.agent_count} agent${db.agent_count === 1 ? '' : 's'} share this pool. When the pool exceeds its cap, invokes are blocked for the whole department.`,
+    db.status === 'exceeded' ? 'Pool exceeded — invokes blocked for this department'
+      : db.status === 'warning' ? 'Over 80% of department pool used' : 'Department pool on track',
+  ) : '';
 
   document.getElementById('detail').innerHTML = `
     <h2 style="margin-top:8px">${esc(a.name)} <span class="pill ${esc(a.status)}">${esc(a.status)}</span></h2>
@@ -276,6 +393,7 @@ async function refreshDetail() {
     <h2>Identity</h2>
     <div class="kv">${identity}</div>
     ${budgetCard}
+    ${deptCard}
     <h2>Pending approvals</h2>
     ${(d.pending_approvals || []).map(p => `
       <div style="background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--warn);border-radius:10px;padding:12px 16px;margin-bottom:10px">

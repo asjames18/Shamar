@@ -27,6 +27,7 @@ export interface Agent {
   permissions: string[];
   /** Monthly spend cap in USD. Null = no cap. */
   budget_monthly_usd: number | null;
+  /** Autonomy level L0–L5, server-enforced (ADR-0006). New agents default to L3 (Standard). */
   autonomy_level: AutonomyLevel;
   last_heartbeat_at: string | null;
   created_at: string;
@@ -77,6 +78,10 @@ export const KNOWN_EVENT_TYPES = [
   'credential.accessed',
   'budget.warning',
   'budget.exceeded',
+  // Department pool alerts (ADR-0007) — distinct from per-agent budget alerts
+  // so the two pools' edge-triggered dedup can never cross-contaminate.
+  'department.budget.warning',
+  'department.budget.exceeded',
   'security.alert',
 ] as const;
 
@@ -140,7 +145,7 @@ export interface ApprovalRequest {
   detail: string;
   status: ApprovalStatus;
   requested_by: EventActor;
-  /** Identifier of the human who decided, e.g. an email. Null while pending. */
+  /** Identifier of the human who decided, e.g. an email — or `agent:<id>` when an L5 supervisor agent decided. Null while pending. */
   decided_by: string | null;
   requested_at: string;
   decided_at: string | null;
@@ -155,8 +160,18 @@ export interface ApprovalInput {
 
 export interface ApprovalDecisionInput {
   decision: 'granted' | 'denied';
-  /** Identifier of the deciding human, e.g. an email. */
-  decided_by: string;
+  /**
+   * Identifier of the deciding human, e.g. an email.
+   * Mutually exclusive with decided_by_agent_id — exactly one is required.
+   */
+  decided_by?: string;
+  /**
+   * ID of an L5 supervisor agent deciding for an agent it supervises
+   * (the request's agent must list it as supervisor_agent_id).
+   * Mutually exclusive with decided_by — exactly one is required.
+   * Recorded as `agent:<id>` on the request and the audit event.
+   */
+  decided_by_agent_id?: string;
   reason?: string;
 }
 
@@ -287,6 +302,43 @@ export interface AgentBudgetState {
   status: 'ok' | 'warning' | 'exceeded';
 }
 
+/**
+ * Live view of a department's monthly spend against its shared budget cap
+ * (Phase 4 governance, ADR-0007). Spend is summed across every agent whose
+ * `department` field matches, this calendar month; only real reported costs
+ * count (unknown costs stay out — never estimated).
+ */
+export interface DepartmentBudgetState {
+  /** Department name this state describes. */
+  department: string;
+  /** Department's monthly budget cap in USD. */
+  limit_usd: number;
+  /** Sum of real reported costs across member agents this calendar month. */
+  spend_month_usd: number;
+  /** Number of agents currently in this department. */
+  agent_count: number;
+  /** spend_month_usd / limit_usd, e.g. 0.85 = 85% of budget used. */
+  pct_used: number;
+  /** 'ok' (< 80%), 'warning' (>= 80%, < 100%), 'exceeded' (>= 100%). */
+  status: 'ok' | 'warning' | 'exceeded';
+}
+
+/** One row of the GET /api/departments response. */
+export interface DepartmentSummary {
+  /** Department name. */
+  name: string;
+  /** Number of agents currently in this department. */
+  agent_count: number;
+  /** Budget meter, or null when the department has no monthly budget set. */
+  budget: DepartmentBudgetState | null;
+}
+
+/** Body for PUT /api/departments/:name/budget — set or clear a department's cap. */
+export interface SetDepartmentBudgetInput {
+  /** Monthly cap in USD; null clears the department's budget. Must be finite and non-negative when present. */
+  budget_monthly_usd: number | null;
+}
+
 export interface AgentDetail {
   agent: Agent;
   /** Convenience alias for agent.last_heartbeat_at. */
@@ -298,4 +350,10 @@ export interface AgentDetail {
   pending_approvals: ApprovalRequest[];
   /** Budget meter, or null when the agent has no monthly budget set. */
   budget: AgentBudgetState | null;
+  /**
+   * Department pool meter (ADR-0007), or null when the agent's department has
+   * no monthly budget set. Present so an agent blocked by the shared pool can
+   * see why its invokes are throttled.
+   */
+  department_budget: DepartmentBudgetState | null;
 }

@@ -476,3 +476,65 @@ Scope: P4 arch problem flagged in the 20:30 cycle — `AgentEventInput.cost_usd`
 **Committed:** `6d53033 docs(adr): ADR-0005 resolves cost reporting semantics + validate self-reported costs` (+ `ddd91f2` STATUS health line) — local only (Mosheh syncs to GitHub).
 
 **Next:** Phase 4 remaining — autonomy-level policy rules (L0–L5) with enforcement, per-department budgets. (Demo verdict, live BYOK key checks, Phase 2 real-daemon still need Antonio.)
+
+## 2026-09-23 ~21:20 EDT — IN PROGRESS: autonomy-level policy rules (L0–L5) with enforcement (agent: antonio/loop)
+
+Scope: P2→P4 MVP governance — `autonomy_level` is stored (0–5, validated) but has zero semantics: an L0 "monitored only" agent can invoke models today exactly like an L5. This cycle gives every level real server-side enforcement: ADR-0006 records the semantics; a `policy.ts` module gates `POST /api/providers/:id/invoke` (L0 always blocked, L1 needs a human grant inside a trailing 24h window, L2 gets max_tokens clamped to 1024, L3/L4/L5 invoke subject to the existing budget gate); L5 supervisors gain the right to grant/deny approvals for agents that list them as `supervisor_agent_id` (via `decided_by_agent_id`, decided_by recorded as `agent:<id>`); dashboard agent detail gets labeled autonomy badges (UI/UX track). Tests: L0 block + audit event, L1 block/grant-window/pass, L2 clamp, L5 grant rights + rejections, human flow unchanged.
+
+## 2026-09-23 ~21:45 EDT — autonomy-level policy rules (L0–L5) with enforcement (agent: antonio/loop) — COMPLETE
+
+**Task selected:** Phase 4 governance — `autonomy_level` was stored (0–5, validated) but had zero semantics; an L0 agent could invoke models exactly like an L5.
+
+**Decision (ADR-0006):** every level gets defined, server-enforced semantics at `POST /api/providers/:id/invoke`, fail-closed with `policy.blocked` audit events:
+- L0 Monitored — invoke always blocked (403, reason `autonomy_l0`).
+- L1 Supervised — invoke blocked unless a human granted an approval for the agent inside the trailing 24h (no schema change; reads the existing approvals table). 403 hints to `POST /api/approvals`.
+- L2 Assisted — invoke allowed; `max_tokens` clamped server-side to 1024; effective value returned in the response.
+- L3 Standard — invoke allowed (now the default for new agents, was 0 — the old default would have blocked every new agent once enforcement landed).
+- L4 Trusted — invoke allowed (same invoke rights as L3 today).
+- L5 Supervisor — invoke allowed; may grant/deny approvals for agents that list it as `supervisor_agent_id` via `decided_by_agent_id` (exactly one decider required; non-L5 / non-supervisor / both-fields rejected with 400; `decided_by` recorded as `agent:<id>`, audit actor `agent`).
+- Budget gate still applies to every level — autonomy never overrides a hard money cap; autonomy gates run before the budget gate.
+
+**Changes:**
+- `docs/adr/0006-autonomy-levels.md` — new ADR with the semantics table and consequences.
+- `apps/api/src/policy.ts` — new: `AUTONOMY_LEVELS` labels/taglines, `checkInvokePolicy` (pure decision logic), `effectiveMaxTokens` clamp, `L1_GRANT_WINDOW_MS`, `L2_MAX_TOKENS_CAP`.
+- `apps/api/src/store.ts` — `hasRecentGrant(agentId, windowMs)`; `decideApproval` enforces the L5 supervisor rules fail-closed; new-agent default autonomy 0 → 3 (ADR-0006); `Storage` interface documents `hasRecentGrant`.
+- `apps/api/src/server.ts` — autonomy gate on the invoke path before the budget gate (403 + `policy.blocked` on denial); L2 clamp applied to the adapter request; invoke 200 response gains a `policy` block (`autonomy_level`, `max_tokens_clamped`, `max_tokens_effective`); grant/deny accepts `decided_by_agent_id`.
+- `packages/types/src/index.ts` — `ApprovalDecisionInput.decided_by` optional, new `decided_by_agent_id`; `decided_by` doc covers `agent:<id>`; autonomy default documented.
+- `apps/web/index.html` — agent detail Autonomy row is now a labeled badge (L0 · Monitored … L5 · Supervisor) with a policy-description tooltip.
+- Tests: 5 new (L0 block + audit, L1 block/grant/pass, L2 clamp reporting, L5 grant/deny rights + three rejection paths + human flow unchanged) — **86/86 pass**.
+
+**Verification:** `npm run lint` ✅ zero warnings · `npm run typecheck` ✅ · `npm test` ✅ 86/86 · `npm run build` ✅. E2E against a live API: L0 agent invoke → 403 `autonomy_l0`, `policy.blocked` landed in the agent timeline. (Two self-caught issues during the cycle: the old default of 0 would have blocked every new agent — moved the default to L3 per the ADR; one stale test asserted the old `decided_by is required` message — updated to the new fail-closed wording.)
+
+**Security self-review:** no secrets touched; new gates fail closed and run before any provider network call; no prompt/response bodies added to events (policy.blocked carries only action/reason/level); L5 decision rights are narrowly scoped to supervised agents and audited with actor `agent` so the trail stays truthful.
+
+**Committed:** local only (Mosheh syncs to GitHub).
+
+**Next:** Phase 4 remaining — per-department budgets. (Demo verdict, live BYOK key checks, Phase 2 real-daemon still need Antonio.)
+
+## 2026-09-23 ~21:50 EDT — IN PROGRESS: per-department budgets (agent: antonio/loop)
+
+Scope: Phase 4 governance, final slice — shared monthly budget caps per department (free-text `department` on agents). ADR-0007 records the semantics: `department_budgets` table (name PK, cap); department spend = sum of monthly `cost_usd` across member agents; warning 80% / exceeded 100% edge-triggered once per month (milestones on the table), alert events are the existing `budget.warning`/`budget.exceeded` types attributed to the triggering agent with `data.department`; invoke gate: autonomy → per-agent budget → per-department budget, 403 + `policy.blocked` when the pool is exceeded; autonomy still never overrides a money cap. API: `PUT /api/departments/:name/budget`, `GET /api/departments/:name/budget`, `GET /api/departments` (names + agent counts + budget states). Dashboard: department budget card with meters + set/clear (UI/UX track). Tests: validation, state math, edge triggers, invoke blocking, alert attribution.
+
+## 2026-09-23 ~22:10 EDT — per-department budgets (agent: antonio/loop) — COMPLETE
+
+**Task selected:** Phase 4 governance, final slice — shared monthly budget caps per department (was the last open Phase 4 item). P2/P4 MVP governance per the directive.
+
+**Decision (ADR-0007):** a department is a named, shared monthly budget pool. `department_budgets` table (name PK, cap, fired-alert months); `PUT/GET /api/departments/:name/budget` (null clears; fail-closed validation), `GET /api/departments` (names + agent counts + meters); spend = sum of `cost_usd` this month across member agents (real reported costs only; $0 cap = spend nothing); warning 80% / exceeded 100%, each at most once per calendar month; alerts land on the triggering agent's timeline with `data.department` set. Invoke gate order: autonomy → per-agent budget → department budget; exceeded pool → 403 + `policy.blocked` (reason `department_budget_exceeded`) before any provider call. Autonomy still never overrides a hard money cap. `department_budget` on agent detail so a throttled agent can see the pool blocking it.
+
+**Mid-build catch (arch problem avoided):** the original plan reused `budget.warning`/`budget.exceeded` for department alerts — but the per-agent `checkBudget` dedup query matches (agent_id, type, month), so a department alert on the triggering agent's timeline would have suppressed that agent's own personal-budget alert. Fixed with distinct types `department.budget.warning`/`department.budget.exceeded` (also added to `KNOWN_EVENT_TYPES`); the two pools' dedup can never cross-contaminate.
+
+**Changes:**
+- `docs/adr/0007-department-budgets.md` — new ADR (semantics, alternatives rejected, mid-month department-move caveat documented).
+- `packages/types/src/index.ts` — `DepartmentBudgetState`, `DepartmentSummary`, `SetDepartmentBudgetInput`; new event types; `department_budget` on `AgentDetail`.
+- `apps/api/src/store.ts` — `department_budgets` table; `setDepartmentBudget` (reset alert months on re-set), `departmentBudgetState`, `listDepartments`, `checkDepartmentBudget` (edge-triggered, emits `department.budget.*` on the triggering agent); `model.called` hook now also checks the agent's department pool; detail payload gains `department_budget`.
+- `apps/api/src/server.ts` — department budget gate after the per-agent gate (403 + `policy.blocked` + `checkDepartmentBudget` to keep the alert on the trail); routes `GET /api/departments`, `GET|PUT /api/departments/:name/budget`.
+- `apps/web/index.html` — "Department budgets" list-view section: per-department cards with pool meters + inline set/clear, plus a set-budget-for-any-name form; shared `budgetMeterHtml` renderer (refactored the agent budget card onto it); agent detail shows the department pool meter. Mobile-first cards, honest validation errors, truthful statuses (UI/UX track).
+- Tests: 4 new (set → state → clear; validation fails closed; shared-pool math + edge-triggered alerts on the triggering agent + no personal-alert contamination; invoke 403 `department_budget_exceeded` / 502 passthrough) — **90/90 pass**.
+
+**Verification:** `npm run lint` ✅ zero warnings · `npm run typecheck` ✅ · `npm test` ✅ 90/90 · `npm run build` ✅. E2E against a live API: cap set → spend 0.45/0.50 → warning (90%) on triggering agent → spend 0.55 → exceeded → invoke 403 `department_budget_exceeded`, `policy.blocked` + `department.budget.exceeded` on the trail, department list + detail pool meter correct.
+
+**Security self-review:** no secrets touched; caps are fail-closed validated (finite, non-negative); gates run before any provider network call; alert events carry only pool numbers, never prompt/response bodies; no new auth surface (routes behind the same API key).
+
+**Committed:** `d327743 feat(governance): per-department monthly budget pools (ADR-0007)` (+ doc updates in this entry) — local only (Mosheh syncs to GitHub).
+
+**Next:** Phase 4 COMPLETE. Remaining before the promotion decision (~a week out): Antonio's demo verdict, live BYOK key checks (all four adapters), Phase 2 real-daemon Ollama run (his machine). Open PRs: none. Per the directive, next cycle picks the highest-priority unclaimed item (P8 new MVP feature candidates: Phase 5 org view seeds, or DX/docs follow-ups).

@@ -18,6 +18,9 @@ import type {
   AgentEventInput,
   AgentEventType,
   AgentInput,
+  DepartmentBudgetState,
+  DepartmentSummary,
+  SetDepartmentBudgetInput,
   AgentStatus,
   ApprovalDecisionInput,
   ApprovalInput,
@@ -55,6 +58,32 @@ export interface Storage {
    */
   checkBudget(agentId: string): void;
   /**
+   * Set or clear a department's monthly budget cap (Phase 4 governance,
+   * ADR-0007). A null cap clears the budget; fired-alert months reset when a
+   * new cap is set so the next cycle alerts again.
+   */
+  setDepartmentBudget(name: string, input: SetDepartmentBudgetInput): DepartmentBudgetState | null;
+  /**
+   * Live budget meter for a department's shared pool, or null when it has no
+   * monthly budget. Spend is summed across member agents this calendar month —
+   * only real reported costs (cost_usd NOT NULL); unknown costs stay out,
+   * never estimated (ADR-0003).
+   */
+  departmentBudgetState(name: string): DepartmentBudgetState | null;
+  /**
+   * Every department derived from agents (plus any with a stored cap but
+   * currently zero agents), with agent counts and budget meters.
+   */
+  listDepartments(): DepartmentSummary[];
+  /**
+   * Fire edge-triggered department budget alerts (`budget.warning` at 80%,
+   * `budget.exceeded` at 100%). Each alert is emitted at most once per
+   * calendar month; the alert is recorded on `triggeringAgentId`'s timeline
+   * with `data.department` set, since events are agent-scoped (ADR-0007).
+   * Safe to call any time; no-op when the department has no budget.
+   */
+  checkDepartmentBudget(department: string, triggeringAgentId: string): void;
+  /**
    * Server-side event append (internal use only, never exposed via /api/events).
    * Unlike appendEvent, the server may set cost_usd when it is known by
    * definition — e.g. 0 for local Ollama inference, which has no provider
@@ -89,6 +118,8 @@ export interface Storage {
    * it was already decided (fail closed — no un-deciding, no double-deciding).
    */
   decideApproval(id: string, decision: ApprovalDecisionInput): ApprovalRequest | null;
+  /** True when the agent has a granted approval decided within the trailing window (ADR-0006, L1 gate). */
+  hasRecentGrant(agentId: string, windowMs: number): boolean;
   // dashboard
   dashboardSummary(): DashboardSummary;
   close(): void;
@@ -108,7 +139,7 @@ CREATE TABLE IF NOT EXISTS agents (
   tools TEXT NOT NULL DEFAULT '[]',
   permissions TEXT NOT NULL DEFAULT '[]',
   budget_monthly_usd REAL,
-  autonomy_level INTEGER NOT NULL DEFAULT 0,
+  autonomy_level INTEGER NOT NULL DEFAULT 3,
   last_heartbeat_at TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
@@ -151,7 +182,17 @@ CREATE TABLE IF NOT EXISTS approvals (
 );
 CREATE INDEX IF NOT EXISTS idx_approvals_status ON approvals(status, requested_at DESC);
 CREATE INDEX IF NOT EXISTS idx_approvals_agent ON approvals(agent_id, status);
-`;
+-- Department budget caps (ADR-0007): one row per named department budget pool.
+-- warning_fired_month / exceeded_fired_month hold 'YYYY-MM' of the last
+-- edge-triggered alert, so each alert fires at most once per calendar month.
+CREATE TABLE IF NOT EXISTS department_budgets (
+  name TEXT PRIMARY KEY,
+  budget_monthly_usd REAL,
+  warning_fired_month TEXT,
+  exceeded_fired_month TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);`;
 
 const now = () => new Date().toISOString();
 
@@ -238,7 +279,7 @@ export class SqliteStorage implements Storage {
     }
     const status = input.status ?? 'idle';
     if (!VALID_STATUSES.includes(status)) throw new ValidationError(`invalid status: ${status}`);
-    const autonomy = input.autonomy_level ?? 0;
+    const autonomy = input.autonomy_level ?? 3; // ADR-0006: new agents default to L3 (Standard)
     if (!Number.isInteger(autonomy) || autonomy < 0 || autonomy > 5) {
       throw new ValidationError('autonomy_level must be an integer 0-5');
     }
@@ -367,6 +408,7 @@ export class SqliteStorage implements Storage {
       recent_events: recent.map(rowToEvent),
       pending_approvals: this.listApprovals({ agent_id: id, status: 'pending' }),
       budget: this.budgetState(id),
+      department_budget: agent.department ? this.departmentBudgetState(agent.department) : null,
     };
   }
 
@@ -431,6 +473,146 @@ export class SqliteStorage implements Storage {
     }
   }
 
+  // --- department budgets (ADR-0007) ----------------------------------------
+
+  /** 'YYYY-MM' in UTC for edge-trigger dedup. */
+  private currentMonth(): string {
+    return new Date().toISOString().slice(0, 7);
+  }
+
+  setDepartmentBudget(name: string, input: SetDepartmentBudgetInput): DepartmentBudgetState | null {
+    const trimmed = name.trim();
+    if (!trimmed) throw new ValidationError('department name must not be empty');
+    const cap = input.budget_monthly_usd;
+    if (cap != null && (!Number.isFinite(cap) || cap < 0)) {
+      throw new ValidationError('budget_monthly_usd must be a finite, non-negative number or null');
+    }
+    if (cap == null) {
+      this.db.prepare('DELETE FROM department_budgets WHERE name = ?').run(trimmed);
+      return null;
+    }
+    const existing = this.db
+      .prepare('SELECT name FROM department_budgets WHERE name = ?')
+      .get(trimmed) as { name: string } | undefined;
+    if (existing) {
+      // Reset fired-alert months: a newly set cap starts a fresh alert cycle.
+      this.db
+        .prepare(
+          `UPDATE department_budgets
+           SET budget_monthly_usd = ?, warning_fired_month = NULL, exceeded_fired_month = NULL, updated_at = ?
+           WHERE name = ?`,
+        )
+        .run(cap, now(), trimmed);
+    } else {
+      this.db
+        .prepare(
+          `INSERT INTO department_budgets (name, budget_monthly_usd, warning_fired_month, exceeded_fired_month, created_at, updated_at)
+           VALUES (?, ?, NULL, NULL, ?, ?)`,
+        )
+        .run(trimmed, cap, now(), now());
+    }
+    return this.departmentBudgetState(trimmed);
+  }
+
+  /** Real reported spend across a department's member agents since the given ISO time. */
+  private departmentSpendSince(department: string, sinceIso: string): number {
+    const row = this.db
+      .prepare(
+        `SELECT COALESCE(SUM(e.cost_usd), 0) AS spend FROM events e
+         JOIN agents a ON a.id = e.agent_id
+         WHERE a.department = ? AND e.occurred_at >= ? AND e.cost_usd IS NOT NULL`,
+      )
+      .get(department, sinceIso) as { spend: number };
+    return Number(row.spend);
+  }
+
+  departmentBudgetState(name: string): DepartmentBudgetState | null {
+    const trimmed = name.trim();
+    if (!trimmed) return null;
+    const row = this.db
+      .prepare('SELECT * FROM department_budgets WHERE name = ?')
+      .get(trimmed) as Record<string, unknown> | undefined;
+    if (!row || row.budget_monthly_usd == null) return null;
+    const limit = Number(row.budget_monthly_usd);
+    if (!Number.isFinite(limit) || limit < 0) return null;
+    const spend = this.departmentSpendSince(trimmed, this.monthStart());
+    const agent_count = (
+      this.db.prepare('SELECT COUNT(*) AS c FROM agents WHERE department = ?').get(trimmed) as { c: number }
+    ).c;
+    if (limit === 0) {
+      // A $0 budget means "spend nothing": any spend (or the mere cap) is exceeded.
+      return { department: trimmed, limit_usd: 0, spend_month_usd: spend, agent_count, pct_used: 1, status: 'exceeded' };
+    }
+    const pct = spend / limit;
+    return {
+      department: trimmed,
+      limit_usd: limit,
+      spend_month_usd: spend,
+      agent_count,
+      pct_used: pct,
+      status: pct >= 1 ? 'exceeded' : pct >= 0.8 ? 'warning' : 'ok',
+    };
+  }
+
+  listDepartments(): DepartmentSummary[] {
+    const rows = this.db
+      .prepare(
+        `SELECT DISTINCT department AS name FROM agents WHERE department != ''
+         UNION
+         SELECT name FROM department_budgets
+         ORDER BY name ASC`,
+      )
+      .all() as { name: string }[];
+    return rows.map((r) => ({
+      name: r.name,
+      agent_count: (
+        this.db.prepare('SELECT COUNT(*) AS c FROM agents WHERE department = ?').get(r.name) as { c: number }
+      ).c,
+      budget: this.departmentBudgetState(r.name),
+    }));
+  }
+
+  checkDepartmentBudget(department: string, triggeringAgentId: string): void {
+    const state = this.departmentBudgetState(department);
+    if (!state) return;
+    const row = this.db
+      .prepare('SELECT warning_fired_month, exceeded_fired_month FROM department_budgets WHERE name = ?')
+      .get(state.department) as
+      | { warning_fired_month: string | null; exceeded_fired_month: string | null }
+      | undefined;
+    if (!row) return;
+    const month = this.currentMonth();
+    const summaryOf = (verb: string) =>
+      `Department budget ${verb}: ${state.department} — $${state.spend_month_usd.toFixed(2)} of $${state.limit_usd.toFixed(2)} spent across ${state.agent_count} agent${state.agent_count === 1 ? '' : 's'} (${Math.round(state.pct_used * 100)}%)`;
+    const data = {
+      department: state.department,
+      department_budget: true,
+      limit_usd: state.limit_usd,
+      spend_month_usd: state.spend_month_usd,
+      pct_used: state.pct_used,
+      agent_count: state.agent_count,
+    };
+    // Events are agent-scoped, so the department alert lands on the triggering
+    // agent's timeline with data.department set (ADR-0007). Types are
+    // department.*-namespaced so per-agent budget dedup can never see them.
+    // No recursion: budget.* events never re-enter the model.called hook.
+    if (state.status === 'exceeded') {
+      if (row.exceeded_fired_month !== month) {
+        this.appendEventInternal({ agent_id: triggeringAgentId, type: 'department.budget.exceeded', actor: 'system', summary: summaryOf('exceeded'), data });
+        this.db
+          .prepare('UPDATE department_budgets SET exceeded_fired_month = ?, updated_at = ? WHERE name = ?')
+          .run(month, now(), state.department);
+      }
+      return;
+    }
+    if (state.status === 'warning' && row.warning_fired_month !== month && row.exceeded_fired_month !== month) {
+      this.appendEventInternal({ agent_id: triggeringAgentId, type: 'department.budget.warning', actor: 'system', summary: summaryOf('warning'), data });
+      this.db
+        .prepare('UPDATE department_budgets SET warning_fired_month = ?, updated_at = ? WHERE name = ?')
+        .run(month, now(), state.department);
+    }
+  }
+
   private appendEventInternal(input: {
     agent_id: string;
     type: string;
@@ -484,6 +666,10 @@ export class SqliteStorage implements Storage {
     // budget.* events, never model.called).
     if (input.type === 'model.called' && input.cost_usd != null) {
       this.checkBudget(input.agent_id);
+      // Department pools share the same trigger: the triggering agent's spend
+      // can push its department over a cap (ADR-0007).
+      const agent = this.getAgent(input.agent_id);
+      if (agent?.department) this.checkDepartmentBudget(agent.department, input.agent_id);
     }
     return rowToEvent(r);
   }
@@ -609,6 +795,22 @@ export class SqliteStorage implements Storage {
     ).map(rowToApproval);
   }
 
+  /**
+   * True when the agent has a granted approval decided within the trailing
+   * window (used by the L1 autonomy gate, ADR-0006).
+   */
+  hasRecentGrant(agentId: string, windowMs: number): boolean {
+    const cutoff = new Date(Date.now() - windowMs).toISOString();
+    const row = this.db
+      .prepare(
+        `SELECT 1 AS ok FROM approvals
+         WHERE agent_id = ? AND status = 'granted' AND decided_at >= ?
+         LIMIT 1`,
+      )
+      .get(agentId, cutoff) as { ok: number } | undefined;
+    return !!row;
+  }
+
   decideApproval(id: string, decision: ApprovalDecisionInput): ApprovalRequest | null {
     const existing = this.getApproval(id);
     if (!existing) return null;
@@ -618,20 +820,43 @@ export class SqliteStorage implements Storage {
     if (decision.decision !== 'granted' && decision.decision !== 'denied') {
       throw new ValidationError(`invalid decision: ${decision.decision} — must be granted or denied`);
     }
-    if (!decision.decided_by || typeof decision.decided_by !== 'string' || !decision.decided_by.trim()) {
-      throw new ValidationError('decided_by is required — record which human decided');
+    // ADR-0006: exactly one decider — a human, or an L5 supervisor agent that
+    // supervises the request's agent. Fail closed on anything else.
+    const byHuman = typeof decision.decided_by === 'string' ? decision.decided_by.trim() : '';
+    const byAgent = typeof decision.decided_by_agent_id === 'string' ? decision.decided_by_agent_id.trim() : '';
+    if ((byHuman && byAgent) || (!byHuman && !byAgent)) {
+      throw new ValidationError('provide exactly one of decided_by (human) or decided_by_agent_id (L5 supervisor agent)');
+    }
+    let decidedBy: string;
+    let actor: EventActor = 'human';
+    if (byAgent) {
+      const supervisor = this.getAgent(byAgent);
+      if (!supervisor) throw new ValidationError(`unknown supervisor agent: ${byAgent}`);
+      if (supervisor.autonomy_level !== 5) {
+        throw new ValidationError(
+          `agent ${byAgent} cannot decide approvals: autonomy level L${supervisor.autonomy_level}, need L5 (Supervisor)`,
+        );
+      }
+      const subject = this.getAgent(existing.agent_id);
+      if (!subject || subject.supervisor_agent_id !== byAgent) {
+        throw new ValidationError(`agent ${byAgent} does not supervise this approval's agent — only its supervisor may decide`);
+      }
+      decidedBy = `agent:${byAgent}`;
+      actor = 'agent';
+    } else {
+      decidedBy = byHuman;
     }
     const decided_at = now();
     const status: ApprovalStatus = decision.decision;
     this.db
       .prepare('UPDATE approvals SET status = ?, decided_by = ?, decided_at = ? WHERE id = ?')
-      .run(status, decision.decided_by.trim(), decided_at, id);
+      .run(status, decidedBy, decided_at, id);
     this.appendEventInternal({
       agent_id: existing.agent_id,
       type: `approval.${status}`,
-      actor: 'human',
+      actor,
       summary: `Approval ${status}: ${existing.title}`,
-      data: { approval_id: id, decided_by: decision.decided_by.trim(), ...(decision.reason ? { reason: decision.reason } : {}) },
+      data: { approval_id: id, decided_by: decidedBy, ...(decision.reason ? { reason: decision.reason } : {}) },
     });
     return this.getApproval(id) as ApprovalRequest;
   }

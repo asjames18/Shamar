@@ -1,6 +1,6 @@
 # STATUS — Shamar (living snapshot)
 
-_Last updated: 2026-09-23 ~20:30 EDT.
+_Last updated: 2026-09-23 ~22:10 EDT.
 
 ## Right now
 
@@ -12,7 +12,11 @@ _Last updated: 2026-09-23 ~20:30 EDT.
 
 **Phase 4 governance — first slice done (2026-09-23 ~20:00)** — human approval workflow live: `POST /api/approvals`, `GET /api/approvals?agent_id=&status=`, `POST /api/approvals/:id/grant|deny`; `approval.requested/granted/denied` events in the audit trail; double-decide fails closed; `pending_approvals` on dashboard summary + agent detail; web dashboard card + per-agent Grant/Deny buttons. Tests 75/75.
 
-**Phase 4 governance — second slice done (2026-09-23 ~20:30)** — per-agent monthly budgets live: `budget.warning` at 80% and `budget.exceeded` at 100% (edge-triggered, once per month), `POST /api/providers/:id/invoke` returns 403 + emits `policy.blocked` when the agent is at budget (gate runs before any provider call, so no cost can be incurred); `budget` block on agent detail; web dashboard budget meter (ok/warning/exceeded). Spend counts only real reported costs — unknown stays out. Tests 78/78. Remaining Phase 4: autonomy-level rules (L0–L5) with enforcement, per-department budgets.
+**Phase 4 governance — third slice done (2026-09-23 ~21:45)** — autonomy-level policy rules (L0–L5) with server-side enforcement (ADR-0006): L0 invokes always blocked, L1 needs a human grant inside a trailing 24h window, L2 gets max_tokens clamped to 1024, L3/L4/L5 invoke subject to the existing budget gate; new agents default to L3 (Standard). L5 supervisors can grant/deny approvals for agents that list them as `supervisor_agent_id` (decided_by recorded as `agent:<id>`, audit actor `agent`). Denials emit `policy.blocked` and fail closed. Dashboard agent detail shows a labeled autonomy badge (Monitored → Supervisor) with a policy description tooltip. Tests 86/86; E2E verified on a live API (L0 invoke → 403 autonomy_l0 + audit event).
+
+**Phase 4 governance — second slice done (2026-09-23 ~20:30)** — per-agent monthly budgets live: `budget.warning` at 80% and `budget.exceeded` at 100% (edge-triggered, once per month), `POST /api/providers/:id/invoke` returns 403 + emits `policy.blocked` when the agent is at budget (gate runs before any provider call, so no cost can be incurred); `budget` block on agent detail; web dashboard budget meter (ok/warning/exceeded). Spend counts only real reported costs — unknown stays out. Tests 78/78.
+
+**Phase 4 governance — fourth and final slice done (2026-09-23 ~22:10)** — per-department monthly budget pools (ADR-0007): shared caps via `PUT/GET /api/departments/:name/budget` + `GET /api/departments` (agent counts + meters); spend summed across member agents per calendar month (real reported costs only); `department.budget.warning`/`department.budget.exceeded` edge-triggered once per month on the triggering agent's timeline — deliberately distinct types so per-agent budget dedup can never cross-contaminate (caught during the build); invoke gate order is autonomy → per-agent budget → department budget, 403 + `policy.blocked` (reason `department_budget_exceeded`) when a pool is exceeded; dashboard department budgets card with meters + inline set/clear; `department_budget` meter on agent detail so a throttled agent can see why invokes fail. Tests 90/90; E2E verified on a live API (cap → spend → warning → exceeded → 403). **Phase 4 COMPLETE.**
 
 ## Recently done
 
@@ -49,4 +53,4 @@ cp .env.example .env && docker compose up   # api :4000, web :3000
 
 ## Health
 
-Tests 81/78 → 81/81 · lint clean · typecheck clean (verified 2026-09-23 ~21:25).
+Tests 81/81 → 86/86 → 90/90 · lint clean · typecheck clean · build clean (verified 2026-09-23 ~22:10).
