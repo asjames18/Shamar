@@ -21,6 +21,8 @@ import type {
   DepartmentBudgetState,
   DepartmentSummary,
   SetDepartmentBudgetInput,
+  OrgAgentNode,
+  OrgView,
   AgentStatus,
   ApprovalDecisionInput,
   ApprovalInput,
@@ -41,6 +43,31 @@ export interface Storage {
   updateAgent(id: string, patch: Partial<AgentInput> & { status?: AgentStatus }): Agent | null;
   deleteAgent(id: string): boolean;
   heartbeat(id: string): Agent | null;
+  /**
+   * Agent lifecycle transitions (Phase 5). pause/resume/retire move the
+   * agent's status with server-side transition rules (retire is terminal);
+   * a call that requests the status the agent already holds is an idempotent
+   * no-op returning the agent unchanged. Each effective transition emits a
+   * matching `agent.paused|resumed|retired` audit event on the agent's
+   * timeline (ADR-0003: events are the audit log).
+   *
+   * Returns null when the agent does not exist; throws ValidationError for
+   * a malformed `reason`; throws ConflictError when the transition is
+   * disallowed from the current status.
+   */
+  lifecycleTransition(id: string, action: 'pause' | 'resume' | 'retire', reason?: unknown): Agent | null;
+  /**
+   * Clone an agent's configuration into a new idle agent (Phase 5). Copies
+   * description, department, owner, supervisor_agent_id, provider, model,
+   * tools, permissions, budget and autonomy level — never runtime state
+   * (status, heartbeats, events). Emits `agent.cloned` on the new agent with
+   * `data.source_agent_id`. Any status may be cloned; the source's config is
+   * just a template.
+   *
+   * Returns null when the source agent does not exist; throws ValidationError
+   * for a malformed `name` override.
+   */
+  cloneAgent(id: string, name?: unknown): Agent | null;
   // agent detail
   getAgentDetail(id: string): AgentDetail | null;
   // events
@@ -75,6 +102,13 @@ export interface Storage {
    * currently zero agents), with agent counts and budget meters.
    */
   listDepartments(): DepartmentSummary[];
+  /**
+   * The workforce as an org chart (Phase 5): departments with their agents,
+   * unassigned agents, agent -> agent delegation links
+   * (supervisor_agent_id), and human -> agent ownership rows. Read-only —
+   * no schema changes, built from the agents table.
+   */
+  orgView(): OrgView;
   /**
    * Fire edge-triggered department budget alerts (`budget.warning` at 80%,
    * `budget.exceeded` at 100%). Each alert is emitted at most once per
@@ -360,6 +394,92 @@ export class SqliteStorage implements Storage {
     return this.getAgent(id);
   }
 
+  lifecycleTransition(id: string, action: 'pause' | 'resume' | 'retire', reason?: unknown): Agent | null {
+    const agent = this.getAgent(id);
+    if (!agent) return null;
+    if (reason !== undefined && (typeof reason !== 'string' || reason.trim() === '' || reason.length > 280)) {
+      throw new ValidationError('reason must be a non-empty string of at most 280 characters');
+    }
+    const from = agent.status;
+    // Transition table: retire is terminal; resume only un-pauses; pause
+    // works from any live running state. Already-in-state is an idempotent
+    // no-op (no duplicate audit event).
+    const plan: { target: AgentStatus; event: 'agent.paused' | 'agent.resumed' | 'agent.retired' } | null =
+      action === 'pause'
+        ? from === 'paused'
+          ? null
+          : from === 'retired'
+            ? (() => { throw new ConflictError('cannot pause a retired agent — retire is terminal; clone it to start over'); })()
+            : { target: 'paused', event: 'agent.paused' }
+        : action === 'resume'
+          ? from === 'paused'
+            ? { target: 'active', event: 'agent.resumed' }
+            : from === 'retired'
+              ? (() => { throw new ConflictError('cannot resume a retired agent — retire is terminal; clone it to start over'); })()
+              : from === 'error'
+                ? (() => { throw new ConflictError('cannot resume an agent in error state — clear it with a heartbeat or a new run first'); })()
+                : null
+          : // retire
+            from === 'retired'
+            ? null
+            : { target: 'retired', event: 'agent.retired' };
+    if (!plan) return agent;
+    this.db.prepare('UPDATE agents SET status = ?, updated_at = ? WHERE id = ?').run(plan.target, now(), id);
+    const summaries = {
+      'agent.paused': `Agent paused: ${agent.name}`,
+      'agent.resumed': `Agent resumed: ${agent.name}`,
+      'agent.retired': `Agent retired: ${agent.name}`,
+    } as const;
+    this.appendEventInternal({
+      agent_id: id,
+      type: plan.event,
+      actor: 'system',
+      summary: summaries[plan.event],
+      data: { from_status: from, to_status: plan.target, ...(reason !== undefined ? { reason: (reason as string).trim() } : {}) },
+    });
+    return this.getAgent(id);
+  }
+
+  cloneAgent(id: string, name?: unknown): Agent | null {
+    const source = this.getAgent(id);
+    if (!source) return null;
+    if (name !== undefined && (typeof name !== 'string' || name.trim() === '')) {
+      throw new ValidationError('name must be a non-empty string');
+    }
+    const cloneName = name !== undefined ? name.trim() : `${source.name} (copy)`;
+    const newId = randomUUID();
+    const ts = now();
+    this.db
+      .prepare(
+        `INSERT INTO agents (id, name, description, department, owner, supervisor_agent_id, provider, model, status, tools, permissions, budget_monthly_usd, autonomy_level, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'idle', ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        newId,
+        cloneName,
+        source.description,
+        source.department,
+        source.owner,
+        source.supervisor_agent_id,
+        source.provider,
+        source.model,
+        JSON.stringify(source.tools),
+        JSON.stringify(source.permissions),
+        source.budget_monthly_usd,
+        source.autonomy_level,
+        ts,
+        ts,
+      );
+    this.appendEventInternal({
+      agent_id: newId,
+      type: 'agent.cloned',
+      actor: 'system',
+      summary: `Agent cloned from ${source.name}`,
+      data: { source_agent_id: source.id, source_name: source.name },
+    });
+    return this.getAgent(newId);
+  }
+
   getAgentDetail(id: string): AgentDetail | null {
     const agent = this.getAgent(id);
     if (!agent) return null;
@@ -570,6 +690,65 @@ export class SqliteStorage implements Storage {
       ).c,
       budget: this.departmentBudgetState(r.name),
     }));
+  }
+
+  orgView(): OrgView {
+    const agents = this.listAgents();
+    const byId = new Map(agents.map((a) => [a.id, a]));
+    const node = (a: Agent): OrgAgentNode => ({
+      id: a.id,
+      name: a.name,
+      status: a.status,
+      owner: a.owner,
+      autonomy_level: a.autonomy_level,
+      supervisor_agent_id: a.supervisor_agent_id,
+    });
+
+    const byDepartment = new Map<string, OrgAgentNode[]>();
+    const unassigned: OrgAgentNode[] = [];
+    for (const a of agents) {
+      const n = node(a);
+      if (a.department) {
+        if (!byDepartment.has(a.department)) byDepartment.set(a.department, []);
+        byDepartment.get(a.department)!.push(n);
+      } else {
+        unassigned.push(n);
+      }
+    }
+    const sortNodes = (ns: OrgAgentNode[]) =>
+      ns.sort((x, y) => x.name.localeCompare(y.name));
+
+    // Departments: every department that has agents, plus any that has a
+    // stored budget cap but currently zero agents (so the org chart stays
+    // truthful about configured pools).
+    const names = new Set([...byDepartment.keys(), ...this.listDepartments().map((d) => d.name)]);
+    const departments = [...names].sort().map((name) => ({
+      name,
+      budget: this.departmentBudgetState(name),
+      agents: sortNodes(byDepartment.get(name) ?? []),
+    }));
+
+    const delegation = agents
+      .filter((a) => a.supervisor_agent_id)
+      .map((a) => ({
+        agent_id: a.id,
+        agent_name: a.name,
+        supervisor_agent_id: a.supervisor_agent_id!,
+        supervisor_name: byId.get(a.supervisor_agent_id!)?.name ?? null,
+      }))
+      .sort((x, y) => x.agent_name.localeCompare(y.agent_name));
+
+    const ownerIds = new Map<string, string[]>();
+    for (const a of agents) {
+      if (!a.owner) continue;
+      if (!ownerIds.has(a.owner)) ownerIds.set(a.owner, []);
+      ownerIds.get(a.owner)!.push(a.id);
+    }
+    const owners = [...ownerIds.entries()]
+      .map(([owner, agent_ids]) => ({ owner, agent_ids }))
+      .sort((x, y) => x.owner.localeCompare(y.owner));
+
+    return { departments, unassigned: sortNodes(unassigned), delegation, owners };
   }
 
   checkDepartmentBudget(department: string, triggeringAgentId: string): void {
@@ -889,6 +1068,14 @@ export class ValidationError extends Error {
   constructor(message: string) {
     super(message);
     this.name = 'ValidationError';
+  }
+}
+
+/** A request was well-formed but conflicts with the resource's current state (HTTP 409). */
+export class ConflictError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ConflictError';
   }
 }
 

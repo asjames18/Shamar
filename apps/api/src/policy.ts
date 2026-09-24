@@ -6,6 +6,8 @@
  * Every denial fails closed and the caller emits a `policy.blocked` audit event.
  *
  * Summary of the rules:
+ * - retired        — invoke always blocked (retire is terminal).
+ * - paused         — invoke blocked until the agent is resumed.
  * - L0 Monitored   — invoke always blocked.
  * - L1 Supervised  — invoke blocked unless a human granted an approval for the
  *                    agent inside the trailing 24h (grant window).
@@ -15,9 +17,10 @@
  * - L5 Supervisor  — invoke allowed; may also grant/deny approvals for agents
  *                    that list it as supervisor_agent_id (enforced in store).
  *
- * The budget gate (hard money cap) is separate and still applies to every
- * level — autonomy never overrides it. Autonomy gates run BEFORE the budget
- * gate in the invoke path.
+ * The lifecycle gate runs first (a paused/retired agent cannot invoke no
+ * matter its autonomy level). The budget gate (hard money cap) is separate
+ * and still applies to every level — autonomy never overrides it. Autonomy
+ * gates run BEFORE the budget gate in the invoke path.
  */
 import type { Agent, AutonomyLevel } from '@control-plane/types';
 
@@ -47,7 +50,11 @@ export interface PolicyStorage {
   hasRecentGrant(agentId: string, windowMs: number): boolean;
 }
 
-export type InvokeBlockReason = 'autonomy_l0' | 'autonomy_l1_approval_required';
+export type InvokeBlockReason =
+  | 'lifecycle_retired'
+  | 'lifecycle_paused'
+  | 'autonomy_l0'
+  | 'autonomy_l1_approval_required';
 
 export type InvokePolicyDecision =
   | { allowed: true }
@@ -59,6 +66,22 @@ export type InvokePolicyDecision =
  * `policy.blocked` audit event on denial.
  */
 export function checkInvokePolicy(agent: Agent, storage: PolicyStorage): InvokePolicyDecision {
+  // Lifecycle gate (Phase 5): a paused/retired agent cannot invoke, no matter
+  // its autonomy level. Fails closed; the caller records `policy.blocked`.
+  if (agent.status === 'retired') {
+    return {
+      allowed: false,
+      reason: 'lifecycle_retired',
+      error: 'agent is retired: model invokes are blocked — clone it to start a new agent with the same configuration',
+    };
+  }
+  if (agent.status === 'paused') {
+    return {
+      allowed: false,
+      reason: 'lifecycle_paused',
+      error: 'agent is paused: model invokes are blocked — resume it via POST /api/agents/:id/resume first',
+    };
+  }
   switch (agent.autonomy_level) {
     case 0:
       return {

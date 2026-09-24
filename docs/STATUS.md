@@ -18,6 +18,10 @@ _Last updated: 2026-09-23 ~22:10 EDT.
 
 **Phase 4 governance — fourth and final slice done (2026-09-23 ~22:10)** — per-department monthly budget pools (ADR-0007): shared caps via `PUT/GET /api/departments/:name/budget` + `GET /api/departments` (agent counts + meters); spend summed across member agents per calendar month (real reported costs only); `department.budget.warning`/`department.budget.exceeded` edge-triggered once per month on the triggering agent's timeline — deliberately distinct types so per-agent budget dedup can never cross-contaminate (caught during the build); invoke gate order is autonomy → per-agent budget → department budget, 403 + `policy.blocked` (reason `department_budget_exceeded`) when a pool is exceeded; dashboard department budgets card with meters + inline set/clear; `department_budget` meter on agent detail so a throttled agent can see why invokes fail. Tests 90/90; E2E verified on a live API (cap → spend → warning → exceeded → 403). **Phase 4 COMPLETE.**
 
+**Phase 5 org view — first slice done (2026-09-23 ~22:40)** — organization view: `GET /api/org` (departments with agents + budget meters, unassigned bucket, agent → agent delegation links from `supervisor_agent_id` with honest `supervisor_name: null` for dangling links, human → agent owner rows; read-only, no schema changes) + dashboard Organization section (mobile-first department cards with status/owner/autonomy/reports-to lines, pool budget meters, unassigned card, delegation summary with owner pills). Tests 93/93; E2E verified on a live API; committed locally (`8e7088e`) — Mosheh syncs to GitHub. Phase 5 remainder: agent lifecycle actions (pause/resume/retire/clone with status-change audit events) and delegation management UI.
+
+**Phase 5 lifecycle actions — done (2026-09-23 ~23:15)** — `POST /api/agents/:id/{pause,resume,retire,clone}` with server-side transition rules (retire is terminal — pause/resume after retire fail closed with 409; already-in-state calls are idempotent no-ops); audit events `agent.paused/resumed/retired/cloned` on the agent's timeline (optional `reason` captured); clone copies config (department, owner, supervisor, provider, model, tools, permissions, budget, autonomy) into a new idle agent with `data.source_agent_id`; the invoke gate now fails closed for paused/retired agents (403 + `policy.blocked`, checked before autonomy/budget gates). Dashboard agent detail gained Lifecycle buttons (Pause/Resume conditional, Retire with confirm, Clone with name prompt). Tests 96/96; E2E verified on a live API (pause → resume → clone → retire → 409). SDK lifecycle methods left as good-first-issue draft 07. Phase 5 remainder: delegation management UI.
+
 ## Recently done
 
 **Contributor-readiness sprint — ✅ COMPLETE 2026-09-23 ~16:35** (directive from Antonio): repo is ready for outside contributors.
@@ -53,4 +57,4 @@ cp .env.example .env && docker compose up   # api :4000, web :3000
 
 ## Health
 
-Tests 81/81 → 86/86 → 90/90 · lint clean · typecheck clean · build clean (verified 2026-09-23 ~22:10).
+Tests 81/81 → 86/86 → 90/90 → 93/93 → 96/96 · lint clean · typecheck clean · build clean (verified 2026-09-23 ~23:15).

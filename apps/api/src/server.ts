@@ -8,7 +8,7 @@
  */
 import { createServer, IncomingMessage, ServerResponse } from 'node:http';
 import { scryptSync, timingSafeEqual } from 'node:crypto';
-import { openStorage, Storage, ValidationError } from './store.js';
+import { openStorage, Storage, ValidationError, ConflictError } from './store.js';
 import { adapterFor, NotImplementedError } from './providers.js';
 import { checkInvokePolicy, effectiveMaxTokens } from './policy.js';
 import type { InvokeRequest, ApprovalStatus } from '@control-plane/types';
@@ -109,6 +109,19 @@ export function createApp(storage: Storage) {
       const hbMatch = path.match(/^\/api\/agents\/([^/]+)\/heartbeat$/);
       if (hbMatch && method === 'POST') {
         const agent = storage.heartbeat(decodeURIComponent(hbMatch[1]));
+        return agent ? send(res, 200, { agent }) : send(res, 404, { error: 'agent not found' });
+      }
+      // Agent lifecycle actions (Phase 5): pause/resume/retire with
+      // server-side transition rules (retire is terminal), clone copies the
+      // config into a new idle agent. Each effective transition is recorded
+      // as an audit event on the agent's timeline.
+      const lifecycleMatch = path.match(/^\/api\/agents\/([^/]+)\/(pause|resume|retire|clone)$/);
+      if (lifecycleMatch && method === 'POST') {
+        const id = decodeURIComponent(lifecycleMatch[1]);
+        const action = lifecycleMatch[2] as 'pause' | 'resume' | 'retire' | 'clone';
+        const body = (await readJson(req)) as { reason?: unknown; name?: unknown };
+        const agent =
+          action === 'clone' ? storage.cloneAgent(id, body.name) : storage.lifecycleTransition(id, action, body.reason);
         return agent ? send(res, 200, { agent }) : send(res, 404, { error: 'agent not found' });
       }
 
@@ -350,6 +363,11 @@ export function createApp(storage: Storage) {
         return approval ? send(res, 200, { approval }) : send(res, 404, { error: 'approval request not found' });
       }
 
+      // --- organization -------------------------------------------------
+      if (path === '/api/org' && method === 'GET') {
+        return send(res, 200, { org: storage.orgView() });
+      }
+
       // --- departments --------------------------------------------------
       if (path === '/api/departments' && method === 'GET') {
         return send(res, 200, { departments: storage.listDepartments() });
@@ -380,6 +398,7 @@ export function createApp(storage: Storage) {
       return send(res, 404, { error: 'not found' });
     } catch (err) {
       if (err instanceof ValidationError) return send(res, 400, { error: err.message });
+      if (err instanceof ConflictError) return send(res, 409, { error: err.message });
       if (err instanceof SyntaxError) return send(res, 400, { error: 'invalid JSON body' });
       console.error('request failed:', err);
       return send(res, 500, { error: 'internal server error' });

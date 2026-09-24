@@ -44,6 +44,7 @@
   .btn { background:var(--accent); color:#062033; border:0; border-radius:8px; padding:9px 16px; font-weight:700; cursor:pointer; font-size:14px; }
   .btn:hover { filter:brightness(1.1); }
   .btn.ghost { background:transparent; color:var(--accent); border:1px solid var(--line); font-weight:600; }
+  .btn.danger { background:transparent; color:var(--danger,#e5484d); border:1px solid var(--danger,#e5484d); font-weight:600; }
   #agent-form { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:18px; margin-bottom:18px; }
   #agent-form .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:12px; margin-bottom:14px; }
   #agent-form label { display:block; font-size:12px; color:var(--dim); text-transform:uppercase; letter-spacing:.5px; margin-bottom:4px; }
@@ -99,6 +100,10 @@
       <div class="hint" style="margin-top:8px">A department's pool is shared across its agents: spend sums across member agents each month, and when the pool exceeds its cap, invokes are blocked for the whole department. Leave a department without a cap and only per-agent budgets apply.</div>
     </div>
     <div class="cards" id="dept-budgets"></div>
+
+    <h2>Organization</h2>
+    <div class="cards" id="org-view"></div>
+    <div class="card" id="org-delegation" style="margin-bottom:26px"></div>
 
     <h2>Recent activity</h2>
     <table>
@@ -229,9 +234,10 @@ form.addEventListener('submit', async (e) => {
 });
 
 async function refreshList() {
-  const [sum, agents, pending, depts] = await Promise.all([
+  const [sum, agents, pending, depts, orgv] = await Promise.all([
     get('/api/dashboard/summary'), get('/api/agents'),
     get('/api/approvals?status=pending'), get('/api/departments'),
+    get('/api/org'),
   ]);
   document.getElementById('cards').innerHTML = [
     [sum.total_agents, 'Total agents'], [sum.active_agents, 'Active'],
@@ -257,6 +263,49 @@ async function refreshList() {
     <td><strong>${esc(a.title)}</strong>${a.detail ? `<br><span style="color:var(--dim)">${esc(a.detail)}</span>` : ''}</td>
     <td>${ago(a.requested_at)}</td><td><span class="pill" style="color:var(--warn);border-color:var(--warn)">${esc(a.requested_by)}</span></td></tr>`).join('')
     || '<tr><td colspan="4">No pending approvals — nothing is waiting on a human.</td></tr>';
+
+  // Organization view (Phase 5): departments as org-chart cards with
+  // agent rows (status, owner, autonomy, reports-to line) plus a
+  // delegation summary of human -> agent ownership and agent -> agent
+  // supervision links.
+  const org = orgv.org;
+  const supOf = Object.fromEntries(org.delegation.map(d => [d.agent_id, d]));
+  const agentRow = a => {
+    const sup = supOf[a.id];
+    const reportsTo = sup
+      ? `<br><span style="color:var(--dim)">↳ reports to ${sup.supervisor_name ? esc(sup.supervisor_name) : '<em style="color:var(--warn)">removed agent</em>'}</span>`
+      : '';
+    return `<div style="padding:8px 0;border-top:1px solid var(--line);display:flex;gap:8px;align-items:flex-start">
+      <span class="pill ${esc(a.status)}">${esc(a.status)}</span>
+      <div style="flex:1;min-width:0"><a class="agent-link" data-id="${esc(a.id)}">${esc(a.name)}</a>
+      <br><span style="color:var(--dim);font-size:12px">${a.owner ? `Owner: ${esc(a.owner)}` : 'No owner'} · L${a.autonomy_level}${reportsTo}</span></div>
+    </div>`;
+  };
+  const deptCard = d => {
+    const b = d.budget;
+    const meter = b ? `<div style="background:var(--line);border-radius:999px;height:6px;overflow:hidden;margin:8px 0 4px" title="Pool $${Number(b.spend_month_usd).toFixed(2)} of $${Number(b.limit_usd).toFixed(2)}">
+      <div style="width:${Math.min(100, Math.round(b.pct_used * 100))}%;height:100%;background:${b.status === 'exceeded' ? 'var(--err)' : b.status === 'warning' ? 'var(--warn)' : 'var(--ok)'};border-radius:999px"></div>
+    </div><div class="hint" style="margin:0 0 4px">Pool: $${Number(b.spend_month_usd).toFixed(2)} / $${Number(b.limit_usd).toFixed(2)}</div>` : '';
+    return `<div class="card"><div class="l">${esc(d.name)} · ${d.agents.length} agent${d.agents.length === 1 ? '' : 's'}</div>
+      ${meter}
+      ${d.agents.map(agentRow).join('') || '<p class="hint" style="margin:4px 0">No agents — the budget pool below is set but empty.</p>'}
+    </div>`;
+  };
+  document.getElementById('org-view').innerHTML = [
+    ...org.departments.map(deptCard),
+    ...(org.unassigned.length ? [`<div class="card"><div class="l">Unassigned · ${org.unassigned.length} agent${org.unassigned.length === 1 ? '' : 's'}</div>
+      <p class="hint" style="margin:4px 0">No department set — set one on the agent to place it in the org chart.</p>
+      ${org.unassigned.map(agentRow).join('')}</div>`] : []),
+  ].join('') || '<p class="hint" style="margin-top:0">No agents yet — the org chart appears once agents are registered.</p>';
+  document.getElementById('org-delegation').innerHTML =
+    `<div class="l" style="margin-bottom:8px">Delegation</div>` +
+    (org.delegation.length
+      ? `<div style="margin-bottom:10px"><strong>${org.delegation.length}</strong> agent${org.delegation.length === 1 ? '' : 's'} supervised: ` +
+        org.delegation.map(d => `${esc(d.agent_name)} <span style="color:var(--dim)">↳</span> ${d.supervisor_name ? esc(d.supervisor_name) : '<em style="color:var(--warn)">removed agent</em>'}`).join(' · ') + '</div>'
+      : '<p class="hint" style="margin:0 0 10px">No agent → agent supervision set — assign a <code>supervisor_agent_id</code> to build a delegation chain.</p>') +
+    (org.owners.length
+      ? `<div style="font-size:13px">` + org.owners.map(o => `<span class="pill" style="margin:0 6px 6px 0" title="${o.agent_ids.length} agent${o.agent_ids.length === 1 ? '' : 's'}">${esc(o.owner)} · ${o.agent_ids.length}</span>`).join('') + '</div>'
+      : '<p class="hint" style="margin:0">No owners set — set an <code>owner</code> on agents to show human → agent delegation.</p>');
 
   document.querySelectorAll('.agent-link').forEach(el =>
     el.addEventListener('click', () => showDetail(el.dataset.id)));
@@ -388,6 +437,13 @@ async function refreshDetail() {
     <h2 style="margin-top:8px">${esc(a.name)} <span class="pill ${esc(a.status)}">${esc(a.status)}</span></h2>
     <p style="color:var(--dim)">${esc(a.description) || ''}</p>
     <p><strong>Last check-in:</strong> ${ago(d.last_check_in)}${d.last_check_in ? ` <span style="color:var(--dim)">(${esc(d.last_check_in)})</span>` : ''}</p>
+    <h2>Lifecycle</h2>
+    <div class="form-actions" style="margin-top:0">
+      ${a.status === 'paused' ? '<button class="btn" data-lifecycle="resume" style="padding:7px 14px;font-size:13px">Resume</button>' : ''}
+      ${['active', 'idle', 'error'].includes(a.status) ? '<button class="btn ghost" data-lifecycle="pause" style="padding:7px 14px;font-size:13px">Pause</button>' : ''}
+      ${a.status !== 'retired' ? '<button class="btn danger" data-lifecycle="retire" style="padding:7px 14px;font-size:13px">Retire</button>' : '<span class="hint" style="margin:0">Retired is terminal — clone to start over with the same configuration.</span>'}
+      <button class="btn ghost" data-lifecycle="clone" style="padding:7px 14px;font-size:13px">Clone</button>
+    </div>
     <h2>Usage</h2>
     <div class="cards">${usageCards}</div>
     <h2>Identity</h2>
@@ -413,6 +469,25 @@ async function refreshDetail() {
     <p class="hint">Costs are shown only when reported by a provider — the control plane never estimates billing numbers.</p>`;
   document.querySelectorAll('[data-decide]').forEach(btn =>
     btn.addEventListener('click', () => decideApproval(btn.dataset.id, btn.dataset.decide)));
+  document.querySelectorAll('[data-lifecycle]').forEach(btn =>
+    btn.addEventListener('click', () => lifecycleAction(btn.dataset.lifecycle)));
+}
+
+async function lifecycleAction(action) {
+  try {
+    if (action === 'retire' && !confirm('Retire this agent? Retire is terminal — it will no longer invoke models. Its configuration can still be cloned.')) return;
+    let body = {};
+    if (action === 'clone') {
+      const name = prompt('Name for the cloned agent (blank for the default):', '');
+      if (name === null) return; // cancelled
+      if (name.trim()) body = { name: name.trim() };
+    }
+    const r = await post(`/api/agents/${encodeURIComponent(detailId)}/${action}`, body);
+    detailId = r.agent.id; // clone jumps to the new agent; transitions stay put
+    await refreshDetail();
+  } catch (e) {
+    document.getElementById('err').textContent = e.message;
+  }
 }
 
 async function showDetail(id) {

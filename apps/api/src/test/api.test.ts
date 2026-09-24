@@ -31,6 +31,15 @@ interface TestAgent {
   name: string;
   status: string;
   last_heartbeat_at: string | null;
+  description?: string;
+  department?: string;
+  owner?: string;
+  provider?: string;
+  model?: string;
+  tools?: string[];
+  permissions?: string[];
+  budget_monthly_usd?: number | null;
+  autonomy_level?: number;
 }
 interface TestEvent {
   type: string;
@@ -58,6 +67,28 @@ interface ApiJson {
   providers?: Array<{ id: string; has_credential?: boolean }>;
   provider?: { id: string; has_credential: boolean; credential?: string };
   total_agents?: number;
+  org?: {
+    departments: Array<{
+      name: string;
+      budget: { status: string } | null;
+      agents: Array<{
+        id: string;
+        name: string;
+        status: string;
+        owner: string;
+        autonomy_level: number;
+        supervisor_agent_id: string | null;
+      }>;
+    }>;
+    unassigned: Array<{ id: string; name: string; supervisor_agent_id: string | null }>;
+    delegation: Array<{
+      agent_id: string;
+      agent_name: string;
+      supervisor_agent_id: string;
+      supervisor_name: string | null;
+    }>;
+    owners: Array<{ owner: string; agent_ids: string[] }>;
+  };
   budget?: {
     limit_usd: number;
     spend_month_usd: number;
@@ -879,4 +910,203 @@ test('department budgets: invoke blocked at department cap (403, reason departme
   const created2 = await api('POST', '/api/agents', { name: 'Open Agent', department: 'OpenDept' });
   const passthrough = await invoke(req(created2.json.agent, 'agent').id);
   assert.equal(passthrough.status, 502);
+});
+
+test('org: groups by department, unassigned bucket, delegation links, owner rows', async () => {
+  const mk = async (body: Record<string, unknown>) => {
+    const r = await api('POST', '/api/agents', body);
+    assert.equal(r.status, 201);
+    return req(r.json.agent, 'agent').id;
+  };
+  const lead = await mk({ name: 'Org Sales Lead', department: 'OrgDept', owner: 'boss@example.com' });
+  const rep = await mk({
+    name: 'Org Sales Rep',
+    department: 'OrgDept',
+    owner: 'boss@example.com',
+    supervisor_agent_id: lead,
+  });
+  const lone = await mk({ name: 'Org Lone Wolf' });
+
+  const r = await api('GET', '/api/org');
+  assert.equal(r.status, 200);
+  const org = req(r.json.org, 'org');
+
+  const sales = org.departments.find((d) => d.name === 'OrgDept');
+  assert.ok(sales, 'OrgDept present');
+  assert.deepEqual(
+    sales.agents.map((a) => a.name),
+    ['Org Sales Lead', 'Org Sales Rep'],
+  );
+  const repNode = sales.agents.find((a) => a.name === 'Org Sales Rep');
+  assert.equal(repNode?.supervisor_agent_id, lead);
+  assert.equal(repNode?.owner, 'boss@example.com');
+  assert.equal(repNode?.autonomy_level, 3);
+
+  assert.ok(org.unassigned.some((a) => a.id === lone), 'agent without department lands in unassigned');
+
+  const repLink = org.delegation.find((d) => d.agent_id === rep);
+  assert.ok(repLink);
+  assert.equal(repLink.supervisor_agent_id, lead);
+  assert.equal(repLink.supervisor_name, 'Org Sales Lead');
+
+  const bossRow = org.owners.find((o) => o.owner === 'boss@example.com');
+  assert.ok(bossRow);
+  assert.deepEqual([...bossRow.agent_ids].sort(), [lead, rep].sort());
+});
+
+test('org: dangling supervisor links stay truthful (supervisor_name null) after delete', async () => {
+  const mk = async (body: Record<string, unknown>) => {
+    const r = await api('POST', '/api/agents', body);
+    assert.equal(r.status, 201);
+    return req(r.json.agent, 'agent').id;
+  };
+  const sup = await mk({ name: 'Org Temp Sup' });
+  const sub = await mk({ name: 'Org Temp Sub', supervisor_agent_id: sup });
+
+  const del = await api('DELETE', `/api/agents/${sup}`);
+  assert.equal(del.status, 200);
+
+  const r = await api('GET', '/api/org');
+  assert.equal(r.status, 200);
+  const org = req(r.json.org, 'org');
+  const link = org.delegation.find((d) => d.agent_id === sub);
+  assert.ok(link, 'delegation link survives the supervisor delete');
+  assert.equal(link.supervisor_agent_id, sup);
+  assert.equal(link.supervisor_name, null);
+  // The deleted agent is gone from the workforce entirely.
+  assert.ok(!org.departments.some((d) => d.agents.some((a) => a.id === sup)));
+  assert.ok(!org.unassigned.some((a) => a.id === sup));
+});
+
+test('org: requires auth', async () => {
+  const r = await api('GET', '/api/org', undefined, false);
+  assert.equal(r.status, 401);
+});
+
+test('lifecycle: pause → resume → retire with audit events; retire is terminal', async () => {
+  const mk = async (body: Record<string, unknown>) => {
+    const r = await api('POST', '/api/agents', body);
+    assert.equal(r.status, 201);
+    return req(r.json.agent, 'agent').id;
+  };
+  const aid = await mk({ name: 'Lifecycle Agent', status: 'active' });
+  const act = (a: string, body?: Record<string, unknown>) => api('POST', `/api/agents/${aid}/${a}`, body);
+
+  // pause from active
+  let r = await act('pause', { reason: 'weekly freeze' });
+  assert.equal(r.status, 200);
+  assert.equal(req(r.json.agent, 'agent').status, 'paused');
+
+  // idempotent: pausing again is a no-op, no duplicate audit event
+  r = await act('pause');
+  assert.equal(r.status, 200);
+  assert.equal(req(r.json.agent, 'agent').status, 'paused');
+
+  // resume from paused
+  r = await act('resume');
+  assert.equal(r.status, 200);
+  assert.equal(req(r.json.agent, 'agent').status, 'active');
+
+  // retire
+  r = await act('retire', { reason: 'superseded' });
+  assert.equal(r.status, 200);
+  assert.equal(req(r.json.agent, 'agent').status, 'retired');
+
+  // retire is terminal: pause and resume fail closed (409)
+  r = await act('pause');
+  assert.equal(r.status, 409);
+  assert.match(req(r.json.error, 'error'), /terminal/);
+  r = await act('resume');
+  assert.equal(r.status, 409);
+  assert.match(req(r.json.error, 'error'), /terminal/);
+
+  // malformed reason fails closed (400), unknown agent is 404
+  r = await act('retire', { reason: 'x'.repeat(281) });
+  assert.equal(r.status, 400);
+  r = await api('POST', '/api/agents/does-not-exist/pause', {});
+  assert.equal(r.status, 404);
+
+  // audit trail: exactly one of each lifecycle event, with the reason captured
+  const detail = await api('GET', `/api/agents/${aid}/detail`);
+  const types = req(detail.json.usage, 'usage').events_by_type;
+  assert.equal(types['agent.paused'], 1);
+  assert.equal(types['agent.resumed'], 1);
+  assert.equal(types['agent.retired'], 1);
+  const events = (await api('GET', `/api/events?agent_id=${aid}`)).json.events as Array<{ type: string; data?: { reason?: string } }>;
+  assert.equal(events.find((e) => e.type === 'agent.paused')?.data?.reason, 'weekly freeze');
+  assert.equal(events.find((e) => e.type === 'agent.retired')?.data?.reason, 'superseded');
+});
+
+test('lifecycle: clone copies config into a new idle agent with an audit event', async () => {
+  const created = await api('POST', '/api/agents', {
+    name: 'Lifecycle Template',
+    description: 'config template',
+    department: 'Ops',
+    owner: 'ops@example.com',
+    provider: 'prov-x',
+    model: 'model-x',
+    tools: ['search'],
+    permissions: ['read'],
+    budget_monthly_usd: 25,
+    autonomy_level: 2,
+    status: 'paused',
+  });
+  const srcId = req(created.json.agent, 'agent').id;
+
+  const clone = await api('POST', `/api/agents/${srcId}/clone`, { name: 'Lifecycle Template v2' });
+  assert.equal(clone.status, 200);
+  const agent = req(clone.json.agent, 'agent');
+  assert.notEqual(agent.id, srcId);
+  assert.equal(agent.name, 'Lifecycle Template v2');
+  assert.equal(agent.status, 'idle'); // clones start idle, never inherit runtime state
+  assert.equal(agent.department, 'Ops');
+  assert.equal(agent.owner, 'ops@example.com');
+  assert.equal(agent.provider, 'prov-x');
+  assert.equal(agent.model, 'model-x');
+  assert.equal(agent.budget_monthly_usd, 25);
+  assert.equal(agent.autonomy_level, 2);
+  assert.deepEqual(agent.tools, ['search']);
+
+  // default name when none is given
+  const clone2 = await api('POST', `/api/agents/${srcId}/clone`, {});
+  assert.equal(clone2.status, 200);
+  assert.equal(req(clone2.json.agent, 'agent').name, 'Lifecycle Template (copy)');
+
+  // audit event on the clone points back at the source
+  const events = (await api('GET', `/api/events?agent_id=${agent.id}`)).json.events as Array<{ type: string; data?: { source_agent_id?: string } }>;
+  const cloned = events.find((e) => e.type === 'agent.cloned');
+  assert.ok(cloned);
+  assert.equal(cloned.data?.source_agent_id, srcId);
+
+  // cloning an unknown agent is 404
+  const missing = await api('POST', '/api/agents/does-not-exist/clone', {});
+  assert.equal(missing.status, 404);
+});
+
+test('lifecycle: invoke is blocked for paused and retired agents (403) with policy.blocked audit', async () => {
+  const providerId = await createOllamaProvider('http://localhost:1'); // unreachable — gate runs before any network call
+  const created = await api('POST', '/api/agents', { name: 'Lifecycle Gate Agent' });
+  const aid = req(created.json.agent, 'agent').id;
+  const invoke = () =>
+    api('POST', `/api/providers/${providerId}/invoke`, {
+      agent_id: aid,
+      model: 'x',
+      messages: [{ role: 'user', content: 'hi' }],
+    });
+
+  await api('POST', `/api/agents/${aid}/pause`, {});
+  let r = await invoke();
+  assert.equal(r.status, 403);
+  assert.match(req(r.json.error, 'error'), /paused/);
+  assert.equal(req(r.json.reason, 'reason'), 'lifecycle_paused');
+
+  await api('POST', `/api/agents/${aid}/resume`, {});
+  await api('POST', `/api/agents/${aid}/retire`, {});
+  r = await invoke();
+  assert.equal(r.status, 403);
+  assert.match(req(r.json.error, 'error'), /retired/);
+  assert.equal(req(r.json.reason, 'reason'), 'lifecycle_retired');
+
+  const detail = await api('GET', `/api/agents/${aid}/detail`);
+  assert.equal(req(detail.json.usage, 'usage').events_by_type['policy.blocked'], 2);
 });

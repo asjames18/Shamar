@@ -538,3 +538,49 @@ Scope: Phase 4 governance, final slice — shared monthly budget caps per depart
 **Committed:** `d327743 feat(governance): per-department monthly budget pools (ADR-0007)` (+ doc updates in this entry) — local only (Mosheh syncs to GitHub).
 
 **Next:** Phase 4 COMPLETE. Remaining before the promotion decision (~a week out): Antonio's demo verdict, live BYOK key checks (all four adapters), Phase 2 real-daemon Ollama run (his machine). Open PRs: none. Per the directive, next cycle picks the highest-priority unclaimed item (P8 new MVP feature candidates: Phase 5 org view seeds, or DX/docs follow-ups).
+
+## 2026-09-23 ~22:15 EDT — IN PROGRESS: Phase 5 org view, first slice (agent: antonio/loop)
+
+Scope: Phase 5 "Organization View" first slice — `GET /api/org` (department → agents grouping with supervisor/owner delegation graph) + dashboard Organization section rendered mobile-first. Uses existing `department`, `owner`, `supervisor_agent_id` fields — no schema changes. Lifecycle actions (pause/resume/retire/clone buttons, status-change audit events) deferred to next slice.
+
+## 2026-09-23 ~22:40 EDT — org view, first slice (agent: antonio/loop) — COMPLETE
+
+**Task selected:** Phase 5 "Organization View" first slice (P8 new MVP feature per directive; Phase 4 complete, all Antonio-blocked items pending). Nothing claimed by the other agent.
+
+**What changed:**
+- `packages/types/src/index.ts` — new `OrgAgentNode`, `OrgDelegationLink`, `OrgDepartment`, `OrgOwnerRow`, `OrgView` types.
+- `apps/api/src/store.ts` — `orgView()` on the Storage interface + SQLite impl: departments (agents + budget meters, incl. capped-but-empty departments), `unassigned` bucket, `delegation` links from `supervisor_agent_id` (dangling supervisors report `supervisor_name: null` — honest, never invented), `owners` human → agent rows. Read-only, no schema changes.
+- `apps/api/src/server.ts` — `GET /api/org` (same API-key auth as everything else).
+- `apps/web/index.html` — "Organization" section: mobile-first department cards (status pill, owner, autonomy level, "↳ reports to" line with removed-agent callout), pool budget meters, Unassigned card, and a delegation summary (agent → agent chains + owner pills). Empty/honest states throughout (UI/UX track).
+- Tests: 3 new — grouping/unassigned/delegation/owner rows; dangling link stays truthful after supervisor delete; auth 401. **93/93 pass.**
+
+**Verification:** `npm run lint` ✅ zero warnings · `npm run typecheck` ✅ · `npm test` ✅ 93/93 · `npm run build` ✅ · dashboard inline script `node --check` ✅. E2E against a live API: lead/rep/drifter → Sales dept with 2 agents, unassigned [Drifter], delegation "Sales Rep → Sales Lead", owner row correct; wrong key → 401.
+
+**Security self-review:** read-only endpoint behind the existing API key; no secrets touched, no prompt/response bodies, org data is registry metadata only; no new attack surface.
+
+**Committed:** `8e7088e` local only (Mosheh syncs to GitHub).
+
+**Next:** Phase 5 remaining — agent lifecycle actions (pause/resume/retire/clone with status-change audit events; good-first-issue candidates) and human → agent delegation management UI. Demo verdict, live BYOK key checks, Phase 2 real-daemon still need Antonio.
+
+## 2026-09-23 ~22:45 EDT — IN PROGRESS: Phase 5 lifecycle actions — pause/resume/retire/clone with audit events (agent: antonio/loop)
+
+Scope: `POST /api/agents/:id/{pause,resume,retire,clone}` with transition rules (retire is terminal), audit events `agent.paused/resumed/retired/cloned` on the trail, invoke gate fails closed for paused/retired agents, dashboard lifecycle buttons on agent detail. Delegation management UI stays queued for next cycle.
+
+## 2026-09-23 ~23:15 EDT — Phase 5 lifecycle actions: pause/resume/retire/clone (agent: antonio/loop) — COMPLETE
+
+**Task selected:** Phase 5 remainder, lifecycle slice (P8 new MVP feature per directive; Phase 4 complete, all Antonio-blocked items pending). Nothing claimed by the other agent. Delegation management UI stays queued for the next cycle.
+
+**What changed:**
+- `packages/types/src/index.ts` — new event types `agent.paused`, `agent.resumed`, `agent.retired`, `agent.cloned` (KNOWN_EVENT_TYPES).
+- `apps/api/src/store.ts` — `Storage.lifecycleTransition(id, action, reason?)` + `ConflictError` (new, maps to 409): pause works from active/idle/error, resume only from paused, retire from anything live; retire is terminal (pause/resume after retire → 409); already-in-state is an idempotent no-op with no duplicate audit event. Each effective transition emits the matching audit event with `data.from_status/to_status` (+ optional `reason`, max 280 chars, validated). `cloneAgent(id, name?)` copies config (description, department, owner, supervisor_agent_id, provider, model, tools, permissions, budget, autonomy) into a new idle agent, emits `agent.cloned` with `data.source_agent_id`; any status may be cloned (the source's config is just a template).
+- `apps/api/src/policy.ts` — lifecycle gate added to `checkInvokePolicy`, checked before the autonomy gate: retired → 403 `lifecycle_retired`, paused → 403 `lifecycle_paused`. The existing `policy.blocked` emission in the invoke path picks it up with no server changes.
+- `apps/api/src/server.ts` — `POST /api/agents/:id/{pause,resume,retire,clone}` (empty body tolerated); `ConflictError` → 409. Note: `PATCH /api/agents/:id` remains the raw admin status setter — the lifecycle endpoints are the guarded, audited path.
+- `apps/web/index.html` — Lifecycle section on agent detail: conditional Pause/Resume buttons, Retire (confirm dialog), Clone (name prompt, blank = default "(copy)"); a `btn.danger` style; server errors surface honestly via the existing error path. Mobile-first inline buttons (UI/UX track).
+- `docs/good-first-issues/07-sdk-lifecycle-methods.md` (+ README table) — SDK wrapper draft for contributors (deferred deliberately).
+- Tests: 3 new — transition rules + idempotency + terminal retire + reason validation + audit trail contents; clone config copy + idle start + `agent.cloned` provenance + 404; invoke blocked 403 for paused/retired with 2 `policy.blocked` events. **96/96 pass.**
+
+**Verification:** `npm run lint` ✅ zero warnings · `npm run typecheck` ✅ · `npm test` ✅ 96/96 · `npm run build` ✅ · dashboard inline script `node --check` ✅. E2E against a live API: create → pause (reason captured) → resume → clone (idle, config copied: Ops/10/4/web) → retire → resume-after-retire 409; trail `agent.created → agent.paused → agent.resumed → agent.retired` in order; `/api/org` unaffected (Ops department correct).
+
+**Security self-review:** no secrets touched; reasons are length-validated (no log bloat); transition conflicts fail closed (409, never a silent state change); the lifecycle invoke gate runs before any provider network call; retired agents can't be silently re-armed except via the raw admin PATCH (maintainer key only, documented above); no new auth surface (routes behind the same API key).
+
+**Next:** Phase 5 remainder — human → agent delegation management UI. Demo verdict, live BYOK key checks, Phase 2 real-daemon still need Antonio. Open PRs: none.

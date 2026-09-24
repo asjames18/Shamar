@@ -61,6 +61,10 @@ export const KNOWN_EVENT_TYPES = [
   'agent.created',
   'agent.started',
   'agent.stopped',
+  'agent.paused',
+  'agent.resumed',
+  'agent.retired',
+  'agent.cloned',
   'agent.heartbeat',
   'task.created',
   'task.started',
@@ -337,6 +341,58 @@ export interface DepartmentSummary {
 export interface SetDepartmentBudgetInput {
   /** Monthly cap in USD; null clears the department's budget. Must be finite and non-negative when present. */
   budget_monthly_usd: number | null;
+}
+
+// ---------------------------------------------------------------- Org view
+
+/**
+ * One agent node in the GET /api/org response — identity plus org
+ * relationships (department, owner, supervisor) only. Cost and event detail
+ * live on the agent detail payload, not here.
+ */
+export interface OrgAgentNode {
+  id: string;
+  name: string;
+  status: AgentStatus;
+  owner: string;
+  autonomy_level: AutonomyLevel;
+  /** Parent agent for agent -> agent delegation. Null for top-level. */
+  supervisor_agent_id: string | null;
+}
+
+/** One agent -> agent delegation link (Phase 5 org view). */
+export interface OrgDelegationLink {
+  agent_id: string;
+  agent_name: string;
+  supervisor_agent_id: string;
+  /** Null when the referenced supervisor no longer exists (dangling link). */
+  supervisor_name: string | null;
+}
+
+/** One department block of the GET /api/org response. */
+export interface OrgDepartment {
+  name: string;
+  budget: DepartmentBudgetState | null;
+  agents: OrgAgentNode[];
+}
+
+/** One human -> agent delegation row (agents owned by the same person). */
+export interface OrgOwnerRow {
+  owner: string;
+  agent_ids: string[];
+}
+
+/**
+ * GET /api/org response: the workforce as an org chart. Departments hold
+ * their agents; agents with no department land in `unassigned`. Delegation
+ * is explicit: `delegation` is agent -> agent (supervisor_agent_id),
+ * `owners` is human -> agent (owner field).
+ */
+export interface OrgView {
+  departments: OrgDepartment[];
+  unassigned: OrgAgentNode[];
+  delegation: OrgDelegationLink[];
+  owners: OrgOwnerRow[];
 }
 
 export interface AgentDetail {

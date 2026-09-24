@@ -32,3 +32,4 @@ is ready for public contributors.
 | 04 | [Python example client (stdlib only)](04-examples-python-client.md) | M |
 | 05 | [`--reset` flag for the demo seed script](05-seed-script-reset-flag.md) | S |
 | 06 | [Dashboard: provider list with health status](06-dashboard-provider-health.md) | M |
+| 07 | [SDK: lifecycle methods (`pause`, `resume`, `retire`, `clone`)](07-sdk-lifecycle-methods.md) | S |
