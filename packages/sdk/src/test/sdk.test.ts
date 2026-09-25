@@ -22,6 +22,10 @@ let server: Server;
 let base = '';
 const recorded: RecordedRequest[] = [];
 
+/** Mutable agent store so lifecycle tests can assert real state transitions. */
+const agentsById = new Map<string, MockAgent>();
+let cloneSeq = 0;
+
 interface MockAgent {
   id: string;
   name: string;
@@ -107,6 +111,67 @@ before(async () => {
       });
     }
 
+    const lifeMatch = path.match(/^\/api\/agents\/([^/]+)\/(pause|resume|retire|clone)$/);
+    if (lifeMatch && req.method === 'POST') {
+      const id = decodeURIComponent(lifeMatch[1]!);
+      const action = lifeMatch[2] as 'pause' | 'resume' | 'retire' | 'clone';
+      if (id === 'missing' || !agentsById.has(id)) {
+        return send(404, { error: 'agent not found' });
+      }
+      const current = agentsById.get(id)!;
+      const b = (body ?? {}) as { reason?: string; name?: string };
+
+      if (action === 'clone') {
+        cloneSeq += 1;
+        const cloned: MockAgent = {
+          ...current,
+          id: `clone-${cloneSeq}`,
+          name: b.name ?? `${current.name} (copy)`,
+          status: 'idle',
+          last_heartbeat_at: null,
+          created_at: '2026-09-25T00:00:00.000Z',
+          updated_at: '2026-09-25T00:00:00.000Z',
+        };
+        agentsById.set(cloned.id, cloned);
+        return send(200, { agent: cloned });
+      }
+
+      if (action === 'pause') {
+        if (current.status === 'retired') {
+          return send(409, {
+            error:
+              'cannot pause a retired agent — retire is terminal; clone it to start over',
+          });
+        }
+        if (current.status !== 'paused') {
+          current.status = 'paused';
+          current.updated_at = new Date().toISOString();
+        }
+        return send(200, { agent: { ...current } });
+      }
+
+      if (action === 'resume') {
+        if (current.status === 'retired') {
+          return send(409, {
+            error:
+              'cannot resume a retired agent — retire is terminal; clone it to start over',
+          });
+        }
+        if (current.status === 'paused') {
+          current.status = 'active';
+          current.updated_at = new Date().toISOString();
+        }
+        return send(200, { agent: { ...current } });
+      }
+
+      // retire
+      if (current.status !== 'retired') {
+        current.status = 'retired';
+        current.updated_at = new Date().toISOString();
+      }
+      return send(200, { agent: { ...current } });
+    }
+
     const agentMatch = path.match(/^\/api\/agents\/([^/]+)$/);
     if (agentMatch) {
       const id = decodeURIComponent(agentMatch[1]!);
@@ -119,9 +184,15 @@ before(async () => {
     }
 
     if (path === '/api/agents' && req.method === 'POST') {
-      return send(201, {
-        agent: agent('agent-1', (body as { name: string }).name),
-      });
+      const name = (body as { name: string }).name;
+      // Keep 'agent-1' for the classic roundtrip test; unique ids otherwise.
+      const id = name === 'sdk-agent' || agentsById.size === 0 ? 'agent-1' : `agent-${agentsById.size + 1}`;
+      const created = agent(id, name);
+      created.department = (body as { department?: string }).department ?? 'ops';
+      created.provider = (body as { provider?: string | null }).provider ?? null;
+      created.model = (body as { model?: string | null }).model ?? null;
+      agentsById.set(created.id, { ...created });
+      return send(201, { agent: created });
     }
     if (path === '/api/agents' && req.method === 'GET') {
       return send(200, { agents: [agent('agent-1', 'sdk-list-agent')] });
@@ -327,5 +398,74 @@ test('unreachable server throws ShamarError with null status', async () => {
       e instanceof ShamarError &&
       e.status === null &&
       /network error/i.test(e.message),
+  );
+});
+
+test('lifecycle: pause → resume → retire state transitions', async () => {
+  const c = client();
+  const registered = await c.register({
+    name: 'lifecycle-agent',
+    department: 'ops',
+  });
+  assert.equal(registered.status, 'active');
+
+  const paused = await c.pause(registered.id, 'weekly freeze');
+  assert.equal(paused.status, 'paused');
+  assert.equal(lastRequest().method, 'POST');
+  assert.equal(lastRequest().path, `/api/agents/${registered.id}/pause`);
+  assert.deepEqual(lastRequest().body, { reason: 'weekly freeze' });
+
+  const resumed = await c.resume(registered.id);
+  assert.equal(resumed.status, 'active');
+  assert.equal(lastRequest().path, `/api/agents/${registered.id}/resume`);
+
+  const retired = await c.retire(registered.id, 'superseded');
+  assert.equal(retired.status, 'retired');
+  assert.equal(lastRequest().path, `/api/agents/${registered.id}/retire`);
+  assert.deepEqual(lastRequest().body, { reason: 'superseded' });
+});
+
+test('lifecycle: clone starts idle with copied config', async () => {
+  const c = client();
+  const registered = await c.register({
+    name: 'source-agent',
+    department: 'research',
+    provider: 'ollama',
+    model: 'llama3.2',
+  });
+  assert.equal(registered.department, 'research');
+
+  const cloned = await c.clone(registered.id, 'source-agent-v2');
+  assert.equal(cloned.status, 'idle');
+  assert.equal(cloned.name, 'source-agent-v2');
+  assert.equal(cloned.department, registered.department);
+  assert.equal(cloned.provider, registered.provider);
+  assert.equal(cloned.model, registered.model);
+  assert.notEqual(cloned.id, registered.id);
+  assert.equal(lastRequest().path, `/api/agents/${registered.id}/clone`);
+  assert.deepEqual(lastRequest().body, { name: 'source-agent-v2' });
+});
+
+test('lifecycle: 409 on illegal terminal transitions; 404 on unknown agent', async () => {
+  const c = client();
+  const registered = await c.register({ name: 'terminal-agent', department: 'ops' });
+  await c.retire(registered.id);
+
+  await assert.rejects(
+    () => c.pause(registered.id),
+    (e) => e instanceof ShamarError && e.status === 409,
+  );
+  await assert.rejects(
+    () => c.resume(registered.id),
+    (e) => e instanceof ShamarError && e.status === 409,
+  );
+
+  await assert.rejects(
+    () => c.pause('missing'),
+    (e) => e instanceof ShamarError && e.status === 404,
+  );
+  await assert.rejects(
+    () => c.clone('missing'),
+    (e) => e instanceof ShamarError && e.status === 404,
   );
 });

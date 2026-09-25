@@ -136,6 +136,49 @@ export class ShamarClient {
     );
   }
 
+  /** Pause an agent (optional reason recorded on the audit trail). */
+  async pause(id: string, reason?: string): Promise<Agent> {
+    const body: Json = reason !== undefined ? { reason } : {};
+    const { agent } = await this.request<{ agent: Agent }>(
+      'POST',
+      `/api/agents/${encodeURIComponent(id)}/pause`,
+      body,
+    );
+    return agent;
+  }
+
+  /** Resume a paused agent. */
+  async resume(id: string): Promise<Agent> {
+    const { agent } = await this.request<{ agent: Agent }>(
+      'POST',
+      `/api/agents/${encodeURIComponent(id)}/resume`,
+      {},
+    );
+    return agent;
+  }
+
+  /** Retire an agent (terminal). Optional reason recorded on the audit trail. */
+  async retire(id: string, reason?: string): Promise<Agent> {
+    const body: Json = reason !== undefined ? { reason } : {};
+    const { agent } = await this.request<{ agent: Agent }>(
+      'POST',
+      `/api/agents/${encodeURIComponent(id)}/retire`,
+      body,
+    );
+    return agent;
+  }
+
+  /** Clone an agent's config into a new idle agent (optional name). */
+  async clone(id: string, name?: string): Promise<Agent> {
+    const body: Json = name !== undefined ? { name } : {};
+    const { agent } = await this.request<{ agent: Agent }>(
+      'POST',
+      `/api/agents/${encodeURIComponent(id)}/clone`,
+      body,
+    );
+    return agent;
+  }
+
   /** Mark the agent as alive now. */
   async heartbeat(agentId: string): Promise<Agent> {
     const { agent } = await this.request<{ agent: Agent }>(
