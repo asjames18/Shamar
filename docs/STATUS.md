@@ -1,10 +1,10 @@
 # STATUS — Shamar (living snapshot)
 
-_Last updated: 2026-09-25 ~13:30 EDT.
+_Last updated: 2026-09-25 ~13:35 EDT.
 
 ## Right now
 
-**MVP Phases 0, 1, 3, 4, 5, 6 feature work DONE.** Phase 2 adapter implemented + mock-daemon verified; **real-daemon verification still pending** (Antonio's machine) — Phase 2 close-out remains open. GFI drafts 01–07 DONE via PRs #8–#14 (queue cleared). **Open PR:** docs sync #15 awaiting CoS merge. Platform is pausing new GFI/MVP invention — waiting on Antonio (via CoS) for the next AgentOS unit.
+**MVP Phases 0, 1, 3, 4, 5, 6 feature work DONE.** Phase 2 adapter implemented + mock-daemon verified; **real-daemon verification still pending** (Antonio's machine) — Phase 2 close-out remains open. GFI drafts 01–07 DONE via PRs #8–#14 (queue cleared). **No open PRs.** PR #15 merged @ `d5cb44b`. Platform is pausing new GFI/MVP invention — waiting on Antonio (via CoS) for the next AgentOS unit.
 
 **GFI clearance (2026-09-25):**
 - PR #8 SDK lifecycle (GFI 07) @ c4e3c06
@@ -38,8 +38,7 @@ _Last updated: 2026-09-25 ~13:30 EDT.
 
 ## Open PRs
 
-- **PR #15** — `docs/post-gfi-sync-2026-09-25` — post-GFI docs sync (STATUS / ROADMAP / GFI README / autonomous-log); **open, awaiting CoS merge** (not merged).
-- GFI 01–07 all merged to main (PRs #8–#14). Latest main: `af0f8ad` (Merge PR #14).
+**NONE.** PR #15 merged (squash `d5cb44b`). Latest main: `d5cb44b`.
 
 ## Blockers / waiting on Antonio
 
