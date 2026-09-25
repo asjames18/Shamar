@@ -31,5 +31,9 @@ is ready for public contributors.
 | 03 | [Sanitize `?limit=` on `GET /api/events`](03-api-sanitize-event-limit.md) — **done** (PR #11) | S |
 | 04 | [Python example client (stdlib only)](04-examples-python-client.md) — **done** (PR #12) | M |
 | 05 | [`--reset` flag for the demo seed script](05-seed-script-reset-flag.md) — **done** (PR #13) | S |
-| 06 | [Dashboard: provider list with health status](06-dashboard-provider-health.md) — **done** (this PR) | M |
+| 06 | [Dashboard: provider list with health status](06-dashboard-provider-health.md) — **done** (PR #14) | M |
 | 07 | [SDK: lifecycle methods (`pause`, `resume`, `retire`, `clone`)](07-sdk-lifecycle-methods.md) — **done** (PR #8) | S |
+
+## Queue status (2026-09-25 ~12:55 EDT)
+
+**Draft queue cleared.** All drafts 01–07 are **done** (PRs #9, #10, #11, #12, #13, #14, #8 respectively). Waiting on Antonio (via CoS) before drafting any new contributor good-first-issues.
