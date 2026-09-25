@@ -3,6 +3,22 @@
 Concise record of each work cycle: timestamp, task, changes, tests, risks, next task.
 
 
+## 2026-09-25 ~11:36 EDT — SDK deleteAgent (GFI 01) (agent: justin/platform) — COMPLETE
+
+**Task selected:** Good-first-issue draft 01 — add `ShamarClient.deleteAgent(id)` calling `DELETE /api/agents/:id`; throw `ShamarError` on non-2xx (clear 404); tests; docs catch-up (PR #8 lifecycle merged).
+
+**What changed:**
+- `packages/sdk/src/index.ts`: `ShamarClient.deleteAgent(id: string): Promise<void>` — DELETE `/api/agents/:id` via existing `request()`; 404/`agent not found` surfaces as `ShamarError`.
+- `packages/sdk/src/test/sdk.test.ts`: mock harness DELETE + deleted-id tracking; asserts delete existing then getAgent 404; delete nonexistent → ShamarError 404.
+- Docs: good-first-issues README + 01 marked done; STATUS (PR #8 merged, this unit); this log.
+
+**Verification:** `npm run lint` · `npm run typecheck` · `npm test` (111/111) · `npm run build`.
+
+**Security self-review:** no secrets; zero runtime deps preserved; 404 fail closed honestly; no API/storage/dashboard behavior change.
+
+**Next:** remaining good-first-issue drafts (02–06), or Antonio-blocked items (demo verdict, live BYOK, Phase 2 real-daemon).
+
+
 ## 2026-09-25 ~11:05 EDT — SDK lifecycle methods pause/resume/retire/clone (agent: justin/platform) — COMPLETE
 
 **Task selected:** Good-first-issue draft 07 — expose Phase 5 agent lifecycle endpoints on `@shamar/sdk` (`pause`, `resume`, `retire`, `clone`); honest 409/404 via `ShamarError`; tests; docs catch-up (STATUS open-PR #7 stale after merge).
