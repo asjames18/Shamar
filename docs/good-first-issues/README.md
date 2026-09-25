@@ -26,8 +26,8 @@ is ready for public contributors.
 
 | # | Draft | Effort |
 |---|-------|--------|
-| 01 | [Add `deleteAgent` to the SDK](01-sdk-delete-agent.md) — **done** (this PR) | S |
-| 02 | [Add `GET /api/providers/:id`](02-api-get-provider-by-id.md) | S |
+| 01 | [Add `deleteAgent` to the SDK](01-sdk-delete-agent.md) — **done** (PR #9) | S |
+| 02 | [Add `GET /api/providers/:id`](02-api-get-provider-by-id.md) — **done** (this PR) | S |
 | 03 | [Sanitize `?limit=` on `GET /api/events`](03-api-sanitize-event-limit.md) | S |
 | 04 | [Python example client (stdlib only)](04-examples-python-client.md) | M |
 | 05 | [`--reset` flag for the demo seed script](05-seed-script-reset-flag.md) | S |

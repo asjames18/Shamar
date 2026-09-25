@@ -3,6 +3,21 @@
 Concise record of each work cycle: timestamp, task, changes, tests, risks, next task.
 
 
+## 2026-09-25 ~11:52 EDT — API GET /api/providers/:id (GFI 02) (agent: justin/platform) — COMPLETE
+
+**Task selected:** Good-first-issue draft 02 — add `GET /api/providers/:id` returning `{ provider }` list-item shape behind API-key auth; 404 `provider not found`; exact-match `$`-anchored regex; tests; docs catch-up (PR #9 deleteAgent merged).
+
+**What changed:**
+- `apps/api/src/server.ts`: `GET /api/providers/:id` via `^/api/providers/([^/]+)$` (`$` anchor so it does not collide with `/:id/models|validate|invoke`); reuses `storage.getProvider(id)`; 404 `{ error: 'provider not found' }`.
+- `apps/api/src/test/api.test.ts`: create provider, GET by id, assert list-item shape + `has_credential` boolean-only (no credential echo); bogus id —> 404.
+- Docs: good-first-issues README + 02 marked done; STATUS (PR #9 merged, this unit); this log.
+
+**Verification:** `npm run lint` — `npm run typecheck` — `npm test` (113/113) — `npm run build`.
+
+**Security self-review:** no secrets; `has_credential` boolean-only, never expose credentials; auth same as other provider routes; read-only addition, no storage changes.
+
+**Next:** remaining good-first-issue drafts (03—06), or Antonio-blocked items (demo verdict, live BYOK, Phase 2 real-daemon).
+
 ## 2026-09-25 ~11:36 EDT — SDK deleteAgent (GFI 01) (agent: justin/platform) — COMPLETE
 
 **Task selected:** Good-first-issue draft 01 — add `ShamarClient.deleteAgent(id)` calling `DELETE /api/agents/:id`; throw `ShamarError` on non-2xx (clear 404); tests; docs catch-up (PR #8 lifecycle merged).

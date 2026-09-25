@@ -66,8 +66,8 @@ interface ApiJson {
   agent?: TestAgent;
   agents?: TestAgent[];
   events?: TestEvent | TestEvent[];
-  providers?: Array<{ id: string; has_credential?: boolean }>;
-  provider?: { id: string; has_credential: boolean; credential?: string };
+  providers?: Array<{ id: string; has_credential?: boolean; kind?: string; name?: string; base_url?: string | null; status?: string; last_health_check?: string | null; created_at?: string }>;
+  provider?: { id: string; has_credential: boolean; credential?: string; kind?: string; name?: string; base_url?: string | null; status?: string; last_health_check?: string | null; created_at?: string };
   total_agents?: number;
   org?: {
     departments: Array<{
@@ -305,6 +305,36 @@ test('providers: create + list (no credential echo)', async () => {
   assert.ok(!('credential' in provider));
   const list = await api('GET', '/api/providers');
   assert.equal(req(list.json.providers, 'providers').length, 1);
+});
+
+test('providers: get by id returns list-item shape', async () => {
+  const created = await api('POST', '/api/providers', {
+    kind: 'ollama',
+    name: 'Get-by-id Ollama',
+    base_url: 'http://localhost:11434',
+    credential: 'sekret',
+  });
+  assert.equal(created.status, 201);
+  const createdProvider = req(created.json.provider, 'provider');
+  const id = createdProvider.id as string;
+  const { status, json } = await api('GET', `/api/providers/${id}`);
+  assert.equal(status, 200);
+  const provider = req(json.provider, 'provider');
+  assert.equal(provider.id, id);
+  assert.equal(provider.kind, 'ollama');
+  assert.equal(provider.name, 'Get-by-id Ollama');
+  assert.equal(provider.base_url, 'http://localhost:11434');
+  assert.equal(provider.has_credential, true);
+  assert.ok(!('credential' in provider));
+  assert.equal(typeof provider.status, 'string');
+  assert.ok('last_health_check' in provider);
+  assert.equal(typeof provider.created_at, 'string');
+});
+
+test('providers: get by id 404 for unknown provider', async () => {
+  const { status, json } = await api('GET', '/api/providers/nope');
+  assert.equal(status, 404);
+  assert.equal(req(json.error, 'error'), 'provider not found');
 });
 
 test('agent detail 404 for unknown agent', async () => {

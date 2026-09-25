@@ -1,6 +1,6 @@
 # STATUS — Shamar (living snapshot)
 
-_Last updated: 2026-09-25 ~11:36 EDT.
+_Last updated: 2026-09-25 ~11:52 EDT.
 
 ## Right now
 
@@ -44,10 +44,10 @@ _Last updated: 2026-09-25 ~11:36 EDT.
 
 ## Open PRs
 
-- None previously open. **PR #7** (`feat/phase6-value-hours-saved`) merged to main (`f87805f`) — Phase 6 COMPLETE.
+- **PR #7** (`feat/phase6-value-hours-saved`) merged to main (`f87805f`) — Phase 6 COMPLETE.
 - **PR #8** (`feat/sdk-lifecycle-methods`) merged to main (`c4e3c06`) — SDK `pause`/`resume`/`retire`/`clone` (good-first-issue 07).
-- **This PR:** `feat/sdk-delete-agent` — SDK `deleteAgent` (good-first-issue 01) — done in this PR (do not merge until reviewed).
-
+- **PR #9** (`feat/sdk-delete-agent`) merged to main (`1790d66`) — SDK `deleteAgent` (good-first-issue 01).
+- **This PR:** `feat/api-get-provider-by-id` — API `GET /api/providers/:id` (good-first-issue 02) — done in this PR (do not merge until reviewed).
 ## Blockers / waiting on Antonio
 
 - **Real-daemon Ollama verification** — `ollama pull llama3.2`, then one invoke via the API. Needs his machine; closes Phase 2.
@@ -67,4 +67,4 @@ cp .env.example .env && docker compose up   # api :4000, web :3000
 
 ## Health
 
-Tests 111/111 · lint clean · typecheck clean · build clean (verified 2026-09-25 ~11:36).
+Tests 113/113 — lint clean — typecheck clean — build clean (verified 2026-09-25 ~11:52).

@@ -1,3 +1,5 @@
+**Status:** done (implemented in `feat/api-get-provider-by-id`)
+
 # Draft issue — Add `GET /api/providers/:id`
 
 **Suggested labels:** `good-first-issue`, `enhancement`
@@ -18,14 +20,14 @@ the models/validate/invoke routes), so this is a thin routing addition.
 
 ## Acceptance criteria
 
-- [ ] `GET /api/providers/:id` returns `{ provider }` with the same shape as an
+- [x] `GET /api/providers/:id` returns `{ provider }` with the same shape as an
       item in `GET /api/providers` (id, kind, name, base_url, has_credential,
       status, last_health_check, created_at), behind the same API-key auth.
-- [ ] Unknown id returns 404 `{ error: 'provider not found' }` — matching the
+- [x] Unknown id returns 404 `{ error: 'provider not found' }` — matching the
       error string the sibling sub-resource routes already use.
-- [ ] API test in `apps/api/src/test/api.test.ts`: create a provider, fetch it
+- [x] API test in `apps/api/src/test/api.test.ts`: create a provider, fetch it
       by id, assert the shape; fetch a bogus id, assert 404.
-- [ ] `npm run lint`, `npm run typecheck`, `npm test`, `npm run build` all pass.
+- [x] `npm run lint`, `npm run typecheck`, `npm test`, `npm run build` all pass.
 
 ## Hints
 
