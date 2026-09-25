@@ -1,3 +1,5 @@
+**Status:** done (implemented in `feat/sdk-lifecycle-methods`)
+
 # SDK: add lifecycle methods (`pause`, `resume`, `retire`, `clone`)
 
 ## Context

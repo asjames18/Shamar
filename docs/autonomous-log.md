@@ -3,6 +3,22 @@
 Concise record of each work cycle: timestamp, task, changes, tests, risks, next task.
 
 
+## 2026-09-25 ~11:05 EDT — SDK lifecycle methods pause/resume/retire/clone (agent: justin/platform) — COMPLETE
+
+**Task selected:** Good-first-issue draft 07 — expose Phase 5 agent lifecycle endpoints on `@shamar/sdk` (`pause`, `resume`, `retire`, `clone`); honest 409/404 via `ShamarError`; tests; docs catch-up (STATUS open-PR #7 stale after merge).
+
+**What changed:**
+- `packages/sdk/src/index.ts`: `ShamarClient.pause(id, reason?)`, `resume(id)`, `retire(id, reason?)`, `clone(id, name?)` — POST `/api/agents/:id/{action}` matching existing request patterns; empty `{}` body by default; optional `reason`/`name` when provided. Errors surface through existing `ShamarError` (no swallowing).
+- `packages/sdk/src/test/sdk.test.ts`: mock harness gained stateful lifecycle routes; asserts paused → resumed → retired, clone starts idle with copied config, 409 on terminal pause/resume, 404 on unknown agent.
+- Docs: good-first-issues README + 07 marked done; STATUS (PR #7 merged, this unit); ROADMAP SDK note; this log.
+
+**Verification:** `npm run lint` · `npm run typecheck` · `npm test` (109/109) · `npm run build`.
+
+**Security self-review:** no secrets; zero runtime deps preserved; 409/404 fail closed honestly; no invented agent state on the client.
+
+**Next:** remaining good-first-issue drafts (01–06), or Antonio-blocked items (demo verdict, live BYOK, Phase 2 real-daemon).
+
+
 ## 2026-09-25 ~10:40 EDT — Phase 6 value polish: Codex P2 on PR #7 (agent: justin/platform) — COMPLETE
 
 **Task selected:** Polish `feat/phase6-value-hours-saved` (PR #7) in place — fix Codex P2 (oversized `human_minutes_saved` → analytics `RangeError` / 500); no new branch/PR; no merge.
