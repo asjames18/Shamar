@@ -1,6 +1,6 @@
 # STATUS — Shamar (living snapshot)
 
-_Last updated: 2026-09-25 ~10:30 EDT.
+_Last updated: 2026-09-25 ~10:40 EDT.
 
 ## Right now
 
@@ -44,7 +44,7 @@ _Last updated: 2026-09-25 ~10:30 EDT.
 
 ## Open PRs
 
-None.
+- **PR #7** `feat/phase6-value-hours-saved` — Phase 6 value / human-hours-saved (explicit estimates only, ADR-0008). Open for review; Codex P2 (oversized minutes → analytics 500) polished in place.
 
 ## Blockers / waiting on Antonio
 
@@ -65,4 +65,4 @@ cp .env.example .env && docker compose up   # api :4000, web :3000
 
 ## Health
 
-Tests 100/100 → (value slice adds coverage) · lint clean · typecheck clean · build clean (verified 2026-09-25 ~10:30).
+Tests 106/106 · lint clean · typecheck clean · build clean (verified 2026-09-25 ~10:40).

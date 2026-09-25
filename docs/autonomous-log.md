@@ -2,6 +2,22 @@
 
 Concise record of each work cycle: timestamp, task, changes, tests, risks, next task.
 
+
+## 2026-09-25 ~10:40 EDT — Phase 6 value polish: Codex P2 on PR #7 (agent: justin/platform) — COMPLETE
+
+**Task selected:** Polish `feat/phase6-value-hours-saved` (PR #7) in place — fix Codex P2 (oversized `human_minutes_saved` → analytics `RangeError` / 500); no new branch/PR; no merge.
+
+**What changed:**
+- `apps/api/src/store.ts`: `MAX_HUMAN_MINUTES_SAVED_PER_EVENT` = 52_560_000 (100 years of continuous wall-clock minutes); ingest rejects above-cap values with 400; analytics SQL `CAST(... AS REAL)` plus the same upper bound (defense-in-depth for legacy rows).
+- `docs/adr/0008-human-hours-saved.md`: document the per-event cap + SQL cast rationale.
+- Tests: oversized → 400; legacy huge integer row does not 500 summary; absent estimates → `human_hours_saved: null` on an isolated DB.
+- Docs: this log; STATUS open-PR note + health.
+
+**Verification:** `npm run lint` · `npm run typecheck` · `npm test` (106/106) · `npm run build`.
+
+**Security self-review:** no secrets; hours never fabricated; no dollar ROI; analytics auth unchanged; oversized estimates fail closed at ingest.
+
+**Next:** Antonio-blocked items (demo verdict, live BYOK, Phase 2 real-daemon), or merge PR #7 when green.
 ## 2026-09-25 ~10:30 EDT — Phase 6 value / human-hours-saved (agent: justin/platform) — COMPLETE
 
 **Task selected:** Phase 6 remainder — explicit `human_minutes_saved` on `task.completed`, analytics `value` block, dashboard honesty matching cost; tests; ADR-0008; docs. No ROI dollars.

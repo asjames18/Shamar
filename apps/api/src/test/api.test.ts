@@ -6,7 +6,7 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import type { AddressInfo } from 'node:net';
 import { createApp } from '../server.js';
-import { SqliteStorage, ValidationError } from '../store.js';
+import { SqliteStorage, ValidationError, MAX_HUMAN_MINUTES_SAVED_PER_EVENT } from '../store.js';
 
 process.env.AGENTOS_DEV_API_KEY = 'test-key';
 
@@ -1375,37 +1375,24 @@ test('analytics: ingest normalizes offset ISO occurred_at to UTC Z', async () =>
 
 
 
-test('analytics value: no estimates leaves hours nullable', async () => {
-  const a = await api('POST', '/api/agents', {
-    name: 'Value No Estimate Agent',
-    department: 'Ops',
-    provider: 'ollama',
-    model: 'llama3.2',
+test('analytics value: no estimates leaves hours nullable', () => {
+  // Isolated DB — absent / null estimates must yield human_hours_saved: null (never fake 0.0).
+  const s = new SqliteStorage(':memory:');
+  const agent = s.createAgent({
+    name: 'Value No Estimate Agent', department: 'Ops', provider: 'ollama', model: 'llama3.2',
   });
-  assert.equal(a.status, 201);
-  const id = req(a.json.agent, 'agent').id;
-  // Completed tasks without human_minutes_saved — hours stay unknown
-  let r = await api('POST', '/api/events', {
-    agent_id: id, type: 'task.completed', summary: 'done A', duration_ms: 100,
+  s.appendEvent({
+    agent_id: agent.id, type: 'task.completed', summary: 'done A', duration_ms: 100,
   });
-  assert.equal(r.status, 201);
-  r = await api('POST', '/api/events', {
-    agent_id: id, type: 'task.completed', summary: 'done B', data: { human_minutes_saved: null },
+  s.appendEvent({
+    agent_id: agent.id, type: 'task.completed', summary: 'done B', data: { human_minutes_saved: null },
   });
-  assert.equal(r.status, 201);
-  // Shape check: value block always present; hours stay null until an estimate exists.
-  // (Shared DB may already have estimates from later tests only if order flips — sibling
-  // tests cover sum + reject; empty-window test covers null-when-zero-observations.)
-  const { status, json } = await api('GET', '/api/analytics/summary');
-  assert.equal(status, 200);
-  const value = req(json.value, 'value');
-  assert.ok(value.tasks_completed >= 2);
-  assert.equal(typeof value.events_with_hours_estimate, 'number');
-  assert.equal(value.estimated, true);
-  assert.ok(
-    value.human_hours_saved === null || typeof value.human_hours_saved === 'number',
-    'human_hours_saved must be null (unknown) or a number',
-  );
+  const summary = s.analyticsSummary();
+  assert.equal(summary.value.tasks_completed, 2);
+  assert.equal(summary.value.events_with_hours_estimate, 0);
+  assert.equal(summary.value.human_hours_saved, null); // unknown — never 0.0
+  assert.equal(summary.value.estimated, true);
+  s.close();
 });
 
 test('analytics value: explicit estimates sum; nulls excluded; negatives rejected', async () => {
@@ -1479,6 +1466,66 @@ test('analytics value: explicit estimates sum; nulls excluded; negatives rejecte
   assert.ok((value.human_hours_saved as number) >= 2 - 1e-9, `expected >= 2h, got ${value.human_hours_saved}`);
   assert.ok(value.tasks_completed >= 4);
 });
+test('analytics value: oversized human_minutes_saved rejected with 400', async () => {
+  const a = await api('POST', '/api/agents', {
+    name: 'Value Oversized Agent',
+    department: 'Ops',
+    provider: 'ollama',
+    model: 'llama3.2',
+  });
+  assert.equal(a.status, 201);
+  const id = req(a.json.agent, 'agent').id;
+
+  // Cap itself is accepted (boundary).
+  let r = await api('POST', '/api/events', {
+    agent_id: id, type: 'task.completed', summary: 'at cap',
+    data: { human_minutes_saved: MAX_HUMAN_MINUTES_SAVED_PER_EVENT },
+  });
+  assert.equal(r.status, 201);
+
+  // Just over the documented career-scale cap → 400.
+  r = await api('POST', '/api/events', {
+    agent_id: id, type: 'task.completed', summary: 'over cap',
+    data: { human_minutes_saved: MAX_HUMAN_MINUTES_SAVED_PER_EVENT + 1 },
+  });
+  assert.equal(r.status, 400);
+  assert.match(req(r.json.error, 'error'), /human_minutes_saved/);
+
+  // Codex P2 example: finite but above Number.MAX_SAFE_INTEGER after JSON parse → 400.
+  r = await api('POST', '/api/events', {
+    agent_id: id, type: 'task.completed', summary: 'unsafe int',
+    data: { human_minutes_saved: 9000000000000000000 },
+  });
+  assert.equal(r.status, 400);
+  assert.match(req(r.json.error, 'error'), /human_minutes_saved/);
+});
+
+test('analytics value: legacy oversized row does not 500 summary (CAST AS REAL)', () => {
+  // Plant a raw row that bypasses ingest validation (legacy / direct SQL).
+  // Without CAST(... AS REAL), node:sqlite RangeErrors when reading the SUM.
+  const s = new SqliteStorage(':memory:');
+  const agent = s.createAgent({
+    name: 'Legacy Huge Minutes Agent', department: 'QA', provider: 'ollama', model: 'llama3',
+  });
+  const db = (s as unknown as { db: { prepare: (sql: string) => { run: (...args: unknown[]) => unknown } } }).db;
+  // Integer above Number.MAX_SAFE_INTEGER — the Codex P2 failure mode (raw JSON text).
+  db.prepare(
+    `INSERT INTO events (id, agent_id, type, occurred_at, actor, summary, data, tokens_in, tokens_out, cost_usd, duration_ms)
+     VALUES (?, ?, 'task.completed', ?, 'agent', 'legacy huge', ?, NULL, NULL, NULL, NULL)`,
+  ).run('evt-huge-mins', agent.id, '2026-09-25T12:00:00.000Z', '{"human_minutes_saved":9000000000000000000}');
+
+  // Must not throw / 500 — CAST AS REAL + upper-bound filter keep aggregation safe.
+  let summary: ReturnType<SqliteStorage["analyticsSummary"]> | undefined;
+  assert.doesNotThrow(() => { summary = s.analyticsSummary(); });
+  assert.ok(summary, 'expected summary');
+  assert.equal(summary!.value.estimated, true);
+  // Oversized legacy estimates are excluded by the SQL upper bound (not counted as observations).
+  // Absent valid estimates → null hours (never fake 0.0 from the legacy junk alone).
+  assert.equal(summary!.value.events_with_hours_estimate, 0);
+  assert.equal(summary!.value.human_hours_saved, null);
+  s.close();
+});
+
 test('analytics: chronological since includes offset ISO that lex would drop', () => {
   // Plant a raw/legacy offset row that bypasses ingest normalize. Lexicographic
   // TEXT compare wrongly excludes it from a 12:00Z since window; datetime() must not.

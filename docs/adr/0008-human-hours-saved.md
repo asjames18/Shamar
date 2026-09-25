@@ -10,7 +10,9 @@ Phase 6 analytics already roll up known `cost_usd` with the same honesty rule as
 
 ## Decision
 
-1. **Optional explicit field only.** Clients may put `human_minutes_saved` (finite, non-negative number) on the `data` object of a `task.completed` event. Absent or `null` means unknown. Invalid values (negative, NaN, non-finite, wrong type) are rejected with 400 — same posture as `cost_usd` (ADR-0005).
+1. **Optional explicit field only.** Clients may put `human_minutes_saved` (finite, non-negative number, **capped**) on the `data` object of a `task.completed` event. Absent or `null` means unknown. Invalid values (negative, NaN, non-finite, wrong type, or **above the per-event cap**) are rejected with 400 — same posture as `cost_usd` (ADR-0005).
+
+   **Per-event cap (`MAX_HUMAN_MINUTES_SAVED_PER_EVENT` = `100 * 365 * 24 * 60` = **52,560,000**):** one hundred years of continuous wall-clock minutes. A single task claiming to save more than a century of continuous human time is not a credible estimate; the bound is far below `Number.MAX_SAFE_INTEGER`, so accepted values stay inside the range `node:sqlite` can marshal without `RangeError`.
 2. **Analytics `value` block** on `GET /api/analytics/summary`:
    - `tasks_completed` — count of `task.completed` in the window
    - `human_hours_saved` — sum of explicit `human_minutes_saved` / 60, or **`null` when `events_with_hours_estimate` is 0**
@@ -23,6 +25,7 @@ Phase 6 analytics already roll up known `cost_usd` with the same honesty rule as
 
 - Good: value metrics follow the same evidence-over-hype rule as cost.
 - Good: no schema migration — field lives in event `data` JSON; SQLite `json_extract` aggregates it.
+- Good: ingest rejects oversized estimates; analytics SQL `CAST(... AS REAL)` (plus the same upper bound) is defense-in-depth so a legacy out-of-range row cannot 500 `GET /api/analytics/summary`.
 - Bad: under-/over-reported minutes are possible (same class of risk as self-reported cost). Accepted for v0.1; verification of external estimates is out of scope.
 - Unchanged: cost semantics (ADR-0005); null cost still means unknown.
 
