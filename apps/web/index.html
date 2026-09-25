@@ -5,25 +5,60 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Shamar — AI Workforce Mission Control</title>
 <style>
-  :root { --bg:#0b1220; --panel:#111a2e; --line:#1e2a45; --txt:#e6edf3; --dim:#94a3b8; --accent:#38bdf8; --ok:#34d399; --warn:#fbbf24; --err:#f87171; }
+  :root {
+    --bg:#0b1220; --panel:#111a2e; --line:#1e2a45; --txt:#e6edf3; --dim:#94a3b8;
+    --accent:#38bdf8; --ok:#34d399; --warn:#fbbf24; --err:#f87171;
+    --radius:12px; --pad:20px;
+  }
   * { box-sizing:border-box; }
   body { margin:0; background:var(--bg); color:var(--txt); font:15px/1.5 system-ui,-apple-system,sans-serif; }
-  header { padding:20px 28px; border-bottom:1px solid var(--line); display:flex; justify-content:space-between; align-items:center; }
+  header {
+    padding:16px var(--pad); border-bottom:1px solid var(--line);
+    display:flex; justify-content:space-between; align-items:center; gap:14px; flex-wrap:wrap;
+  }
   header h1 { margin:0; font-size:20px; letter-spacing:.3px; }
   header h1 span { color:var(--accent); }
   header p { margin:2px 0 0; color:var(--dim); font-size:13px; }
-  #key { background:var(--panel); border:1px solid var(--line); color:var(--txt); padding:8px 12px; border-radius:8px; width:280px; }
-  main { padding:24px 28px; max-width:1100px; margin:0 auto; }
-  .cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:14px; margin-bottom:26px; }
-  .card { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:16px 18px; }
-  .card .n { font-size:30px; font-weight:700; }
-  .card .l { color:var(--dim); font-size:12px; text-transform:uppercase; letter-spacing:.6px; }
+  .header-actions { display:flex; flex-direction:column; align-items:flex-end; gap:6px; min-width:min(280px,100%); }
+  #key {
+    background:var(--panel); border:1px solid var(--line); color:var(--txt);
+    padding:10px 12px; border-radius:8px; width:280px; max-width:100%; min-height:40px;
+  }
+  #refresh-status { color:var(--dim); font-size:12px; min-height:16px; text-align:right; }
+  #refresh-status.loading { color:var(--accent); }
+  #refresh-status.err { color:var(--err); }
+  main { padding:22px var(--pad); max-width:1100px; margin:0 auto; }
+  .cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:14px; margin-bottom:8px; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:var(--radius); padding:16px 18px; }
+  .card .n { font-size:28px; font-weight:700; line-height:1.2; }
+  .card .l { color:var(--dim); font-size:12px; text-transform:uppercase; letter-spacing:.6px; margin-top:4px; }
+  .section { margin:0 0 32px; }
+  .section > h2, .section-head h2 {
+    font-size:13px; margin:0 0 14px; letter-spacing:.55px; text-transform:uppercase;
+    color:var(--dim); font-weight:700; display:flex; align-items:center; gap:12px;
+  }
+  .section > h2::after, .section-head h2::after {
+    content:''; flex:1; height:1px; background:var(--line); min-width:24px;
+  }
+  .section-head { display:flex; flex-wrap:wrap; align-items:center; gap:10px 14px; margin-bottom:14px; }
+  .section-head h2 { margin:0; flex:1; min-width:140px; }
+  .section-intro { color:var(--dim); font-size:13px; margin:0 0 14px; line-height:1.45; }
   h2 { font-size:16px; margin:26px 0 12px; }
-  table { width:100%; border-collapse:collapse; background:var(--panel); border:1px solid var(--line); border-radius:12px; overflow:hidden; }
-  th, td { text-align:left; padding:10px 14px; border-bottom:1px solid var(--line); font-size:14px; }
-  th { color:var(--dim); font-size:12px; text-transform:uppercase; letter-spacing:.5px; }
+  .table-wrap {
+    overflow-x:auto; -webkit-overflow-scrolling:touch;
+    border:1px solid var(--line); border-radius:var(--radius);
+    background:var(--panel); margin-bottom:4px;
+  }
+  table {
+    width:100%; border-collapse:collapse; background:var(--panel);
+    border:1px solid var(--line); border-radius:var(--radius); overflow:hidden;
+  }
+  .table-wrap table { border:0; border-radius:0; min-width:520px; }
+  th, td { text-align:left; padding:12px 14px; border-bottom:1px solid var(--line); font-size:14px; vertical-align:middle; }
+  th { color:var(--dim); font-size:11px; text-transform:uppercase; letter-spacing:.5px; white-space:nowrap; }
   tr:last-child td { border-bottom:0; }
-  .pill { display:inline-block; padding:2px 10px; border-radius:999px; font-size:12px; border:1px solid var(--line); }
+  .empty-row td { color:var(--dim); text-align:center; padding:28px 16px; font-size:13px; }
+  .pill { display:inline-block; padding:3px 10px; border-radius:999px; font-size:12px; border:1px solid var(--line); line-height:1.4; }
   .pill.active { color:var(--ok); border-color:var(--ok); }
   .pill.paused { color:var(--warn); border-color:var(--warn); }
   .pill.error { color:var(--err); border-color:var(--err); }
@@ -31,33 +66,64 @@
   .pill.healthy { color:var(--ok); border-color:var(--ok); }
   .pill.unhealthy { color:var(--err); border-color:var(--err); }
   .pill.unknown { color:var(--dim); }
-  .btn.sm { padding:5px 12px; font-size:12px; }
-  #providers-msg { color:var(--dim); font-size:13px; margin:8px 0 0; min-height:18px; }
+  .btn.sm { padding:8px 14px; font-size:13px; min-height:36px; }
+  #providers-msg { color:var(--dim); font-size:13px; margin:10px 0 0; min-height:18px; }
   #providers-msg.err { color:var(--err); }
   #providers-msg.ok { color:var(--ok); }
   .autonomy-badge { display:inline-block; padding:2px 10px; border-radius:999px; font-size:12px; border:1px solid var(--accent); color:var(--accent); cursor:help; }
-  #err { color:var(--err); margin:12px 0; min-height:20px; }
+  #err { color:var(--err); margin:0 0 16px; min-height:0; }
+  #err:not(:empty) {
+    background:rgba(248,113,113,.12); border:1px solid rgba(248,113,113,.45);
+    border-radius:10px; padding:10px 14px; min-height:20px;
+  }
   code { background:#0a0f1c; padding:2px 6px; border-radius:6px; font-size:13px; }
   .hint { color:var(--dim); font-size:13px; margin-top:18px; }
   a.agent-link { color:var(--accent); text-decoration:none; cursor:pointer; font-weight:600; }
   a.agent-link:hover { text-decoration:underline; }
-  .back { display:inline-block; margin-bottom:6px; color:var(--accent); cursor:pointer; text-decoration:none; }
+  .back { display:inline-block; margin-bottom:6px; color:var(--accent); cursor:pointer; text-decoration:none; padding:6px 0; min-height:36px; }
   .back:hover { text-decoration:underline; }
-  .kv { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:10px; margin:14px 0 4px; }
+  .kv { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:10px; margin:14px 0 4px; }
   .kv div { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:10px 14px; font-size:14px; }
   .kv .k { color:var(--dim); font-size:11px; text-transform:uppercase; letter-spacing:.5px; display:block; margin-bottom:2px; }
   .timeline td:first-child { white-space:nowrap; color:var(--dim); }
   .num { text-align:right; font-variant-numeric:tabular-nums; }
-  .btn { background:var(--accent); color:#062033; border:0; border-radius:8px; padding:9px 16px; font-weight:700; cursor:pointer; font-size:14px; }
+  .btn {
+    background:var(--accent); color:#062033; border:0; border-radius:8px;
+    padding:10px 16px; font-weight:700; cursor:pointer; font-size:14px; min-height:40px;
+  }
   .btn:hover { filter:brightness(1.1); }
+  .btn:disabled { opacity:.55; cursor:not-allowed; filter:none; }
   .btn.ghost { background:transparent; color:var(--accent); border:1px solid var(--line); font-weight:600; }
   .btn.danger { background:transparent; color:var(--danger,#e5484d); border:1px solid var(--danger,#e5484d); font-weight:600; }
-  #agent-form { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:18px; margin-bottom:18px; }
-  #agent-form .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:12px; margin-bottom:14px; }
+  #agent-form { background:var(--panel); border:1px solid var(--line); border-radius:var(--radius); padding:18px; margin-bottom:14px; }
+  #agent-form .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px; margin-bottom:14px; }
   #agent-form label { display:block; font-size:12px; color:var(--dim); text-transform:uppercase; letter-spacing:.5px; margin-bottom:4px; }
-  #agent-form input { width:100%; background:var(--bg); border:1px solid var(--line); color:var(--txt); padding:8px 10px; border-radius:8px; }
-  .form-actions { display:flex; gap:10px; align-items:center; }
+  #agent-form input {
+    width:100%; background:var(--bg); border:1px solid var(--line); color:var(--txt);
+    padding:10px 10px; border-radius:8px; min-height:40px;
+  }
+  .form-actions { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
   .form-ok { color:var(--ok); font-size:13px; }
+  .field-inline {
+    background:var(--bg); border:1px solid var(--line); color:var(--txt);
+    padding:10px 10px; border-radius:8px; min-height:40px;
+  }
+  @media (max-width:640px) {
+    :root { --pad:12px; }
+    header { padding:14px var(--pad); }
+    header h1 { font-size:18px; }
+    .header-actions { align-items:stretch; width:100%; }
+    #key { width:100%; }
+    #refresh-status { text-align:left; }
+    main { padding:16px var(--pad); }
+    .cards { gap:10px; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); }
+    .card { padding:14px; }
+    .card .n { font-size:24px; }
+    .section { margin-bottom:28px; }
+    th, td { padding:10px 12px; font-size:13px; }
+    .table-wrap table { min-width:480px; }
+    .btn, .btn.sm { min-height:40px; }
+  }
 </style>
 </head>
 <body>
@@ -66,86 +132,115 @@
     <h1><span>◈</span> Shamar</h1>
     <p>Mission control for humans, agents, models, tools, and autonomous work.</p>
   </div>
-  <input id="key" type="password" placeholder="API key (x-api-key)" autocomplete="off">
+  <div class="header-actions">
+    <input id="key" type="password" placeholder="API key (x-api-key)" autocomplete="off" aria-label="API key">
+    <div id="refresh-status" aria-live="polite"></div>
+  </div>
 </header>
 <main>
   <div id="err"></div>
 
   <!-- List view -->
   <div id="list-view">
-    <div class="cards" id="cards"></div>
+    <section class="section" aria-label="Summary">
+      <div class="cards" id="cards"></div>
+    </section>
 
-    <h2>Agents</h2>
-    <button class="btn ghost" id="show-form" style="margin-bottom:14px">＋ Add agent</button>
-    <form id="agent-form" style="display:none">
-      <div class="grid">
-        <div><label for="f-name">Name *</label><input id="f-name" required placeholder="Research Agent"></div>
-        <div><label for="f-desc">Description</label><input id="f-desc" placeholder="Deep-dive research on new topics"></div>
-        <div><label for="f-dept">Department</label><input id="f-dept" placeholder="Research"></div>
-        <div><label for="f-owner">Owner</label><input id="f-owner" placeholder="antonio@example.com"></div>
-        <div><label for="f-provider">Provider</label><input id="f-provider" placeholder="Ollama"></div>
-        <div><label for="f-model">Model</label><input id="f-model" placeholder="llama3.1:8b"></div>
+    <section class="section" aria-label="Agents">
+      <div class="section-head">
+        <h2>Agents</h2>
+        <button class="btn ghost" id="show-form" type="button">+ Add agent</button>
       </div>
-      <div class="form-actions">
-        <button type="submit" class="btn">Register agent</button>
-        <button type="button" class="btn ghost" id="hide-form">Cancel</button>
-        <span class="form-ok" id="form-ok"></span>
+      <form id="agent-form" style="display:none">
+        <div class="grid">
+          <div><label for="f-name">Name *</label><input id="f-name" required placeholder="Research Agent"></div>
+          <div><label for="f-desc">Description</label><input id="f-desc" placeholder="Deep-dive research on new topics"></div>
+          <div><label for="f-dept">Department</label><input id="f-dept" placeholder="Research"></div>
+          <div><label for="f-owner">Owner</label><input id="f-owner" placeholder="antonio@example.com"></div>
+          <div><label for="f-provider">Provider</label><input id="f-provider" placeholder="Ollama"></div>
+          <div><label for="f-model">Model</label><input id="f-model" placeholder="llama3.1:8b"></div>
+        </div>
+        <div class="form-actions">
+          <button type="submit" class="btn">Register agent</button>
+          <button type="button" class="btn ghost" id="hide-form">Cancel</button>
+          <span class="form-ok" id="form-ok"></span>
+        </div>
+      </form>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Name</th><th>Department</th><th>Model</th><th>Status</th><th>Last heartbeat</th></tr></thead>
+          <tbody id="agents"><tr class="empty-row"><td colspan="5">Loading agents…</td></tr></tbody>
+        </table>
       </div>
-    </form>
-    <table>
-      <thead><tr><th>Name</th><th>Department</th><th>Model</th><th>Status</th><th>Last heartbeat</th></tr></thead>
-      <tbody id="agents"><tr><td colspan="5">—</td></tr></tbody>
-    </table>
+    </section>
 
-    <h2>Providers</h2>
-    <p class="hint" style="margin-top:0;margin-bottom:12px">Registered model providers and their last health check. Use <strong>Validate</strong> to ping reachability (e.g. confirm Ollama is up). New providers are created via the API or <code>scripts/seed-demo.js</code> — not from this page.</p>
-    <table>
-      <thead><tr><th>Name</th><th>Kind</th><th>Status</th><th>Last health check</th><th></th></tr></thead>
-      <tbody id="providers"><tr><td colspan="5">—</td></tr></tbody>
-    </table>
-    <div id="providers-msg"></div>
-
-    <h2>Department budgets</h2>
-    <div class="card" style="margin-bottom:14px">
-      <div class="form-actions" style="flex-wrap:wrap">
-        <input id="nd-name" placeholder="Department" aria-label="Department" style="width:200px;background:var(--bg);border:1px solid var(--line);color:var(--txt);padding:8px 10px;border-radius:8px">
-        <input id="nd-cap" type="number" min="0" step="0.01" placeholder="Monthly cap $" aria-label="Monthly cap in USD" style="width:150px;background:var(--bg);border:1px solid var(--line);color:var(--txt);padding:8px 10px;border-radius:8px">
-        <button class="btn" id="nd-set" style="font-size:13px">Set budget</button>
+    <section class="section" aria-label="Providers">
+      <h2>Providers</h2>
+      <p class="section-intro">Registered model providers and their last health check. Use <strong>Validate</strong> to ping reachability (e.g. confirm Ollama is up). New providers are created via the API or <code>scripts/seed-demo.js</code> — not from this page.</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Name</th><th>Kind</th><th>Status</th><th>Last health check</th><th></th></tr></thead>
+          <tbody id="providers"><tr class="empty-row"><td colspan="5">Loading providers…</td></tr></tbody>
+        </table>
       </div>
-      <div class="hint" style="margin-top:8px">A department's pool is shared across its agents: spend sums across member agents each month, and when the pool exceeds its cap, invokes are blocked for the whole department. Leave a department without a cap and only per-agent budgets apply.</div>
-    </div>
-    <div class="cards" id="dept-budgets"></div>
+      <div id="providers-msg" role="status"></div>
+    </section>
 
-    <h2>Organization</h2>
-    <div class="cards" id="org-view"></div>
-    <div class="card" id="org-delegation" style="margin-bottom:26px"></div>
+    <section class="section" aria-label="Department budgets">
+      <h2>Department budgets</h2>
+      <div class="card" style="margin-bottom:14px">
+        <div class="form-actions">
+          <input id="nd-name" class="field-inline" placeholder="Department" aria-label="Department" style="width:200px;max-width:100%">
+          <input id="nd-cap" class="field-inline" type="number" min="0" step="0.01" placeholder="Monthly cap $" aria-label="Monthly cap in USD" style="width:150px;max-width:100%">
+          <button class="btn" id="nd-set" type="button">Set budget</button>
+        </div>
+        <div class="hint" style="margin-top:8px">A department's pool is shared across its agents: spend sums across member agents each month, and when the pool exceeds its cap, invokes are blocked for the whole department. Leave a department without a cap and only per-agent budgets apply.</div>
+      </div>
+      <div class="cards" id="dept-budgets"></div>
+    </section>
 
-    <h2>Analytics</h2>
-    <p class="hint" style="margin-top:0;margin-bottom:12px">Cost and task metrics for the selected window. Costs sum only known reported values — unknown costs stay out of totals. Human hours saved sum only explicit estimates (self-reported); unknown stays — (never invent ROI dollars).</p>
-    <div class="form-actions" style="flex-wrap:wrap;margin-bottom:12px">
-      <label for="analytics-window" class="l" style="margin:0;align-self:center">Window</label>
-      <select id="analytics-window" aria-label="Analytics window" style="background:var(--bg);border:1px solid var(--line);color:var(--txt);padding:8px 10px;border-radius:8px">
-        <option value="all" selected>All time (default)</option>
-        <option value="24h">Last 24 hours</option>
-        <option value="7d">Last 7 days</option>
-        <option value="30d">Last 30 days</option>
-        <option value="month">This calendar month</option>
-      </select>
-    </div>
-    <div class="cards" id="analytics-cards"></div>
-    <div class="cards" id="analytics-breakdowns" style="grid-template-columns:repeat(auto-fit,minmax(240px,1fr))"></div>
+    <section class="section" aria-label="Organization">
+      <h2>Organization</h2>
+      <div class="cards" id="org-view"></div>
+      <div class="card" id="org-delegation" style="margin-top:14px"></div>
+    </section>
 
-    <h2>Recent activity</h2>
-    <table>
-      <thead><tr><th>When</th><th>Event</th><th>Summary</th></tr></thead>
-      <tbody id="events"><tr><td colspan="3">—</td></tr></tbody>
-    </table>
+    <section class="section" aria-label="Analytics">
+      <h2>Analytics</h2>
+      <p class="section-intro">Cost and task metrics for the selected window. Costs sum only known reported values — unknown costs stay out of totals. Human hours saved sum only explicit estimates (self-reported); unknown stays — (never invent ROI dollars).</p>
+      <div class="form-actions" style="margin-bottom:14px">
+        <label for="analytics-window" style="margin:0;align-self:center;color:var(--dim);font-size:12px;text-transform:uppercase;letter-spacing:.5px">Window</label>
+        <select id="analytics-window" class="field-inline" aria-label="Analytics window">
+          <option value="all" selected>All time (default)</option>
+          <option value="24h">Last 24 hours</option>
+          <option value="7d">Last 7 days</option>
+          <option value="30d">Last 30 days</option>
+          <option value="month">This calendar month</option>
+        </select>
+      </div>
+      <div class="cards" id="analytics-cards"></div>
+      <div class="cards" id="analytics-breakdowns" style="grid-template-columns:repeat(auto-fit,minmax(240px,1fr));margin-top:14px"></div>
+    </section>
 
-    <h2>Pending approvals</h2>
-    <table>
-      <thead><tr><th>Agent</th><th>Request</th><th>Requested</th><th>By</th></tr></thead>
-      <tbody id="approvals"><tr><td colspan="4">—</td></tr></tbody>
-    </table>
+    <section class="section" aria-label="Recent activity">
+      <h2>Recent activity</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>When</th><th>Event</th><th>Summary</th></tr></thead>
+          <tbody id="events"><tr class="empty-row"><td colspan="3">Loading activity…</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="section" aria-label="Pending approvals">
+      <h2>Pending approvals</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Agent</th><th>Request</th><th>Requested</th><th>By</th></tr></thead>
+          <tbody id="approvals"><tr class="empty-row"><td colspan="4">Loading approvals…</td></tr></tbody>
+        </table>
+      </div>
+    </section>
 
     <p class="hint">Tip: click <strong>Add agent</strong> to register an agent from this dashboard, or run <code>node examples/register-and-report.js</code> to register one from the command line. Activity appears here live. API key is read from <code>AGENTOS_DEV_API_KEY</code> or the field above. Click an agent's name for its detail page.</p>
   </div>
@@ -331,7 +426,7 @@ async function refreshList() {
     <tr><td><a class="agent-link" data-id="${esc(a.id)}">${esc(a.name)}</a><br><span style="color:var(--dim)">${esc(a.description)}</span></td>
     <td>${esc(a.department)}</td><td>${esc(a.model || '—')}</td>
     <td><span class="pill ${esc(a.status)}">${esc(a.status)}</span></td>
-    <td>${ago(a.last_heartbeat_at)}</td></tr>`).join('') || '<tr><td colspan="5">No agents yet.</td></tr>';
+    <td>${ago(a.last_heartbeat_at)}</td></tr>`).join('') || '<tr class="empty-row"><td colspan="5">No agents yet — click Add agent or run the example client.</td></tr>';
 
   // Providers (GFI 06): list + Validate. Never-validated / missing status — "unknown", not failure.
   const providerStatus = (s) => (s === 'healthy' || s === 'unhealthy') ? s : 'unknown';
@@ -351,7 +446,7 @@ async function refreshList() {
   document.getElementById('events').innerHTML = sum.recent_events.map(e => `
     <tr><td>${ago(e.occurred_at)}</td><td><code>${esc(e.type)}</code></td>
     <td><strong>${esc(byId[e.agent_id] || 'agent')}</strong> — ${esc(e.summary)}</td></tr>`).join('')
-    || '<tr><td colspan="3">No events yet.</td></tr>';
+    || '<tr class="empty-row"><td colspan="3">No events yet — activity shows up once agents report in.</td></tr>';
 
   document.getElementById('approvals').innerHTML = pending.approvals.map(a => `
     <tr><td><a class="agent-link" data-id="${esc(a.agent_id)}">${esc(byId[a.agent_id] || 'agent')}</a></td>
@@ -557,7 +652,7 @@ async function refreshDetail() {
     <tr><td>${ago(e.occurred_at)}</td><td><code>${esc(e.type)}</code></td>
     <td>${esc(e.summary)}</td><td class="num">${fmtNum(e.tokens_in)}</td>
     <td class="num">${fmtNum(e.tokens_out)}</td><td class="num">${fmtDur(e.duration_ms)}</td></tr>`
-  ).join('') || '<tr><td colspan="6">No events yet.</td></tr>';
+  ).join('') || '<tr class="empty-row"><td colspan="6">No events yet for this agent.</td></tr>';
 
   const b = d.budget;
   const budgetCard = b ? budgetMeterHtml(
@@ -643,10 +738,12 @@ async function refreshDetail() {
         </div>
       </div>`).join('') || '<p class="hint" style="margin-top:0">No pending approvals for this agent.</p>'}
     <h2>Activity timeline</h2>
+    <div class="table-wrap">
     <table class="timeline">
       <thead><tr><th>When</th><th>Event</th><th>Summary</th><th class="num">Tokens in</th><th class="num">Tokens out</th><th class="num">Duration</th></tr></thead>
       <tbody>${timeline}</tbody>
     </table>
+    </div>
     <p class="hint">Costs are shown only when reported by a provider — the control plane never estimates billing numbers.</p>`;
   document.querySelectorAll('[data-decide]').forEach(btn =>
     btn.addEventListener('click', () => decideApproval(btn.dataset.id, btn.dataset.decide)));
@@ -704,17 +801,36 @@ document.getElementById('back-link').addEventListener('click', () => {
   refresh();
 });
 
+function setRefreshStatus(text, cls) {
+  const el = document.getElementById('refresh-status');
+  if (!el) return;
+  el.textContent = text || '';
+  el.className = cls || '';
+}
+
 async function refresh() {
+  const status = document.getElementById('refresh-status');
+  setRefreshStatus('Refreshing…', 'loading');
   try {
     document.getElementById('err').textContent = '';
     if (detailId) await refreshDetail(); else await refreshList();
+    setRefreshStatus('Updated just now', '');
+    clearTimeout(refresh._clear);
+    refresh._clear = setTimeout(() => { if (status && status.textContent === 'Updated just now') setRefreshStatus('', ''); }, 2500);
   } catch (e) {
     if (detailId && /404|not found/i.test(e.message)) {
       detailId = null;
       document.getElementById('detail-view').style.display = 'none';
       document.getElementById('list-view').style.display = '';
-      await refreshList();
+      try {
+        await refreshList();
+        setRefreshStatus('Updated just now', '');
+      } catch (e2) {
+        setRefreshStatus('Refresh failed', 'err');
+        document.getElementById('err').textContent = e2.message;
+      }
     } else {
+      setRefreshStatus('Refresh failed', 'err');
       document.getElementById('err').textContent = e.message;
     }
   }

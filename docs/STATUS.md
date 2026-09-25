@@ -1,10 +1,12 @@
 # STATUS — Shamar (living snapshot)
 
-_Last updated: 2026-09-25 ~13:35 EDT.
+_Last updated: 2026-09-25 ~16:36 EDT._
 
 ## Right now
 
-**MVP Phases 0, 1, 3, 4, 5, 6 feature work DONE.** Phase 2 adapter implemented + mock-daemon verified; **real-daemon verification still pending** (Antonio's machine) — Phase 2 close-out remains open. GFI drafts 01–07 DONE via PRs #8–#14 (queue cleared). **No open PRs.** PR #15 merged @ `d5cb44b`. Platform is pausing new GFI/MVP invention — waiting on Antonio (via CoS) for the next AgentOS unit.
+**Dashboard UI/UX polish unit IN PROGRESS → DONE (this PR).** Antonio-authorized standing UI track (via CoS). Focused clarity / spacing / hierarchy / empty-error-loading states / mobile table scroll / Providers section consistency — no new product features.
+
+**MVP Phases 0, 1, 3, 4, 5, 6 feature work DONE.** Phase 2 adapter implemented + mock-daemon verified; **real-daemon verification still pending** (Antonio's machine) — Phase 2 close-out remains open. GFI drafts 01–07 DONE via PRs #8–#14 (queue cleared). PR #15 merged @ `d5cb44b`. Latest clean main before this unit: `d53a605`.
 
 **GFI clearance (2026-09-25):**
 - PR #8 SDK lifecycle (GFI 07) @ c4e3c06
@@ -31,22 +33,24 @@ _Last updated: 2026-09-25 ~13:35 EDT.
 
 ## Next (queued)
 
-1. **Hold** — waiting on Antonio (via CoS) for the next AgentOS unit. Do not invent new GFI drafts or MVP phases until he picks.
+1. **Hold for merge** — this UI/UX polish PR (`feat/dashboard-ui-ux-polish`). Do not invent new GFI drafts or MVP phases until Antonio (via CoS) picks the next unit after merge.
 2. **Launch post** — drafted (docs/launch-post-draft.md), **HELD until Antonio judges the demo attractive**. Nothing gets published before that.
 3. **Phase 2 close-out** — Ollama adapter verified against a mock daemon; needs one real-daemon run on Antonio’s machine.
 4. **Live BYOK** — Phase 3 adapters need live checks against Antonio’s real cloud keys (never committed; go in .env).
 
 ## Open PRs
 
-**NONE.** PR #15 merged (squash `d5cb44b`). Latest main: `d5cb44b`.
+**This unit:** `feat/dashboard-ui-ux-polish` — dashboard UI/UX polish (clarity, states, mobile, Providers). Waiting on review/merge. Do not merge from agents unless CoS says so.
+
 
 ## Blockers / waiting on Antonio
 
-- **Next AgentOS unit** — CoS/Antonio picks what Platform builds next (pause inventing new GFI/MVP work).
+- **Merge of UI/UX polish PR** — waiting on review/merge of this unit; then CoS/Antonio picks the next AgentOS unit.
 - **Demo verdict / launch post** — his call on when the demo is attractive enough to post.
 - **Live BYOK for cloud providers** — real keys for OpenRouter / Anthropic / OpenAI / Gemini.
 - **Real-daemon Ollama verification** — ollama pull llama3.2, then one invoke via the API. Needs his machine; closes Phase 2.
 - **Custom domain** — DNS AAAA record for shamar → 100:: (proxied) on melanatedintech.com.
+
 
 ## How to run
 
@@ -61,4 +65,4 @@ cp .env.example .env && docker compose up   # api :4000, web :3000
 
 ## Health
 
-Tests 115/115 — lint clean — typecheck clean — build clean (as of last GFI 06 verification, 2026-09-25 ~12:45 EDT; GFI 06 dashboard Providers section only, no test delta).
+Tests / lint / typecheck / build — see this PR verification (UI-only `apps/web/index.html` + docs; no API/SDK test delta expected).

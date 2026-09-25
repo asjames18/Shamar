@@ -1,3 +1,17 @@
+## 2026-09-25 ~16:36 EDT — Dashboard UI/UX polish (clarity, states, mobile, Providers) (agent: justin/platform) — COMPLETE
+
+**Task selected:** Antonio (via CoS) authorized one AgentOS unit — focused UI/UX polish on the Shamar dashboard (`apps/web/index.html`). Standing UI track only; no new product features; no Antonio-gated work (demo verdict, live BYOK, Phase 2 real Ollama, custom domain).
+
+**What changed:**
+- `apps/web/index.html`: section hierarchy (`.section` + uppercase heads with hairline rules); consistent spacing/typography; `.table-wrap` horizontal scroll for narrow viewports; larger touch targets on buttons/inputs; honest empty-row copy for Agents / Providers / Events / Approvals / detail timeline; visible `#err` banner; header refresh status (Refreshing… / Updated just now / Refresh failed); Providers section aligned with Agents patterns (badges, Validate, empty state, intro).
+- Docs: `docs/STATUS.md`, `ROADMAP.md`, this log.
+
+**Verification:** `npm run lint` · `npm run typecheck` · `npm test` · `npm run build`; `node --check` on extracted dashboard script. Visual smoke against live API optional/skipped if stack not running.
+
+**Security self-review:** no secrets; zero budget; UI-only; no API/SDK/providers package changes; still escapes via `esc()`.
+
+**Next:** hold for merge of this PR; do not invent follow-on units.
+
 # Autonomous Development Log
 
 Concise record of each work cycle: timestamp, task, changes, tests, risks, next task.
