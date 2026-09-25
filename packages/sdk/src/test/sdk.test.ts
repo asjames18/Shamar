@@ -24,6 +24,7 @@ const recorded: RecordedRequest[] = [];
 
 /** Mutable agent store so lifecycle tests can assert real state transitions. */
 const agentsById = new Map<string, MockAgent>();
+const deletedIds = new Set<string>();
 let cloneSeq = 0;
 
 interface MockAgent {
@@ -175,8 +176,21 @@ before(async () => {
     const agentMatch = path.match(/^\/api\/agents\/([^/]+)$/);
     if (agentMatch) {
       const id = decodeURIComponent(agentMatch[1]!);
-      if (id === 'missing') return send(404, { error: 'agent not found' });
-      if (req.method === 'GET') return send(200, { agent: agent(id, 'n') });
+      if (req.method === 'DELETE') {
+        if (id === 'missing' || !agentsById.has(id)) {
+          return send(404, { error: 'agent not found' });
+        }
+        agentsById.delete(id);
+        deletedIds.add(id);
+        return send(200, { deleted: true });
+      }
+      if (id === 'missing' || deletedIds.has(id)) {
+        return send(404, { error: 'agent not found' });
+      }
+      if (req.method === 'GET') {
+        const stored = agentsById.get(id);
+        return send(200, { agent: stored ? { ...stored } : agent(id, 'n') });
+      }
       if (req.method === 'PATCH')
         return send(200, {
           agent: { ...agent(id, 'n'), ...(body as object) },
@@ -466,6 +480,31 @@ test('lifecycle: 409 on illegal terminal transitions; 404 on unknown agent', asy
   );
   await assert.rejects(
     () => c.clone('missing'),
+    (e) => e instanceof ShamarError && e.status === 404,
+  );
+});
+
+test('deleteAgent removes an existing agent; subsequent getAgent throws 404', async () => {
+  const c = client();
+  const registered = await c.register({
+    name: 'to-delete-agent',
+    department: 'ops',
+  });
+  assert.ok(registered.id);
+
+  await c.deleteAgent(registered.id);
+  assert.equal(lastRequest().method, 'DELETE');
+  assert.equal(lastRequest().path, `/api/agents/${registered.id}`);
+
+  await assert.rejects(
+    () => c.getAgent(registered.id),
+    (e) => e instanceof ShamarError && e.status === 404,
+  );
+});
+
+test('deleteAgent on nonexistent agent throws ShamarError with 404', async () => {
+  await assert.rejects(
+    () => client().deleteAgent('missing'),
     (e) => e instanceof ShamarError && e.status === 404,
   );
 });

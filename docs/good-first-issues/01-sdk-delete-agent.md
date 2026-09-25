@@ -1,3 +1,5 @@
+**Status:** done (implemented in `feat/sdk-delete-agent`)
+
 # Draft issue — Add `deleteAgent` to the SDK
 
 **Suggested labels:** `good-first-issue`, `enhancement`
@@ -15,14 +17,14 @@ offboarding script) currently have to hand-roll the HTTP call.
 
 ## Acceptance criteria
 
-- [ ] `ShamarClient.deleteAgent(id: string): Promise<void>` added to
+- [x] `ShamarClient.deleteAgent(id: string): Promise<void>` added to
       `packages/sdk/src/index.ts`, calling `DELETE /api/agents/:id` and
       throwing `ShamarError` on non-2xx (including a clear error for 404).
-- [ ] Integration test in `packages/sdk/src/test/` (see existing tests for the
+- [x] Integration test in `packages/sdk/src/test/` (see existing tests for the
       pattern — they spin up the real API against a temp SQLite file) covering:
   - deleting an existing agent succeeds and a subsequent `getAgent` throws 404
   - deleting a nonexistent agent throws `ShamarError` with status 404
-- [ ] `npm run lint`, `npm run typecheck`, `npm test`, `npm run build` all pass.
+- [x] `npm run lint`, `npm run typecheck`, `npm test`, `npm run build` all pass.
 
 ## Hints
 

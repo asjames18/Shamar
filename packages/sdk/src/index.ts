@@ -110,6 +110,14 @@ export class ShamarClient {
     return agent;
   }
 
+  /** Delete an agent by id. Throws ShamarError (404) if not found. */
+  async deleteAgent(id: string): Promise<void> {
+    await this.request<{ deleted: true }>(
+      'DELETE',
+      `/api/agents/${encodeURIComponent(id)}`,
+    );
+  }
+
   /** List all registered agents. */
   async listAgents(): Promise<Agent[]> {
     const { agents } = await this.request<{ agents: Agent[] }>(
