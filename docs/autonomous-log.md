@@ -1,7 +1,22 @@
-
 # Autonomous Development Log
 
 Concise record of each work cycle: timestamp, task, changes, tests, risks, next task.
+
+## 2026-09-25 ~10:05 EDT — Phase 6 analytics polish: Codex P2s on PR #3 (agent: justin/platform) — COMPLETE
+
+**Task selected:** Polish `feat/phase6-analytics-summary` (PR #3) in place — fix both Codex P2 review findings; no new branch/PR; no merge.
+
+**What changed:**
+- `apps/web/index.html`: Analytics `money()` shows `—` when `events_with_cost` is 0 (unknown); known zero (`events_with_cost > 0`, sum 0) still shows `$0.00` (ADR-0003 / AGENTS.md).
+- `apps/api/src/store.ts`: `normalizeOccurredAt` on ingest (offset ISO → UTC Z); `analyticsSummary` `since` filter uses `datetime(e.occurred_at) >= datetime(?)` so chronological windows do not drop offset timestamps that lexicographic TEXT compare would exclude.
+- Tests: ingest normalize + invalid `occurred_at` 400; chronological since trap (raw offset row included; pre-window offset excluded).
+- Docs: this log only (STATUS/ROADMAP unchanged — still accurate).
+
+**Verification:** `npm run lint` · `npm run typecheck` · `npm test` · `npm run build` (counts in commit/PR).
+
+**Security self-review:** no secrets; costs still never fabricated; analytics auth unchanged; UI still escapes labels via `esc()`.
+
+**Next:** Phase 6 remainder — value / human-hours-saved (explicit estimates only), or Antonio-blocked items (demo verdict, live BYOK, Phase 2 real-daemon).
 
 ## 2026-09-25 ~09:15 EDT — Phase 6 analytics first slice: GET /api/analytics/summary + dashboard (agent: justin/platform) — COMPLETE
 

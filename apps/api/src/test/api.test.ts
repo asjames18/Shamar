@@ -44,6 +44,8 @@ interface TestAgent {
 interface TestEvent {
   type: string;
   cost_usd: number | null;
+  occurred_at?: string;
+  id?: string;
 }
 interface AgentUsage {
   events_total: number;
@@ -1339,3 +1341,63 @@ test('analytics: breakdowns by department/model/provider + success/fail rates', 
   r = await api('GET', '/api/analytics/summary', undefined, false);
   assert.equal(r.status, 401);
 });
+
+test('analytics: ingest normalizes offset ISO occurred_at to UTC Z', async () => {
+  const a = await api('POST', '/api/agents', { name: 'Offset Normalize Agent' });
+  assert.equal(a.status, 201);
+  const id = req(a.json.agent, 'agent').id;
+  // 08:00-05:00 == 13:00Z — must be stored as UTC Z, not the raw offset string.
+  const offset = '2026-09-25T08:00:00-05:00';
+  const r = await api('POST', '/api/events', {
+    agent_id: id, type: 'task.completed', summary: 'offset ts', occurred_at: offset,
+  });
+  assert.equal(r.status, 201);
+  const ev = req(r.json.events as TestEvent, 'events');
+  assert.equal(ev.occurred_at, '2026-09-25T13:00:00.000Z');
+
+  const bad = await api('POST', '/api/events', {
+    agent_id: id, type: 'task.completed', summary: 'bad ts', occurred_at: 'not-a-timestamp',
+  });
+  assert.equal(bad.status, 400);
+  assert.match(req(bad.json.error, 'error'), /occurred_at/);
+});
+
+test('analytics: chronological since includes offset ISO that lex would drop', () => {
+  // Plant a raw/legacy offset row that bypasses ingest normalize. Lexicographic
+  // TEXT compare wrongly excludes it from a 12:00Z since window; datetime() must not.
+  const s = new SqliteStorage(':memory:');
+  const agent = s.createAgent({
+    name: 'Lex Trap Agent', department: 'QA', provider: 'ollama', model: 'llama3',
+  });
+  const offsetIso = '2026-09-25T08:00:00-05:00'; // chronologically 13:00Z
+  const since = '2026-09-25T12:00:00.000Z';
+  assert.equal(offsetIso >= since, false, 'precondition: lex compare would exclude this row');
+
+  const db = (s as unknown as { db: { prepare: (sql: string) => { run: (...args: unknown[]) => unknown } } }).db;
+  db.prepare(
+    `INSERT INTO events (id, agent_id, type, occurred_at, actor, summary, data, tokens_in, tokens_out, cost_usd, duration_ms)
+     VALUES (?, ?, 'task.completed', ?, 'agent', 'legacy offset', '{}', NULL, NULL, 0.42, NULL)`,
+  ).run('evt-lex-trap', agent.id, offsetIso);
+
+  // createAgent also emits agent.created at "now" (inside the since window), so
+  // assert on the planted cost row — not raw total_events.
+  const summary = s.analyticsSummary({ since, window: 'custom' });
+  assert.equal(summary.totals.events_with_cost, 1, 'offset ISO inside window must be included');
+  assert.equal(summary.totals.cost_usd, 0.42);
+  assert.ok(summary.totals.total_events >= 1);
+  assert.equal(summary.by_agent.length, 1);
+  assert.equal(summary.by_agent[0].key, agent.id);
+  assert.equal(summary.by_agent[0].cost_usd, 0.42);
+
+  // Outside the window chronologically: 06:00-05:00 == 11:00Z — before since.
+  // Lex would also exclude it; chronological must keep cost totals unchanged.
+  db.prepare(
+    `INSERT INTO events (id, agent_id, type, occurred_at, actor, summary, data, tokens_in, tokens_out, cost_usd, duration_ms)
+     VALUES (?, ?, 'task.completed', ?, 'agent', 'before window', '{}', NULL, NULL, 0.01, NULL)`,
+  ).run('evt-lex-before', agent.id, '2026-09-25T06:00:00-05:00');
+  const summary2 = s.analyticsSummary({ since, window: 'custom' });
+  assert.equal(summary2.totals.events_with_cost, 1, 'pre-window offset ISO must stay excluded');
+  assert.equal(summary2.totals.cost_usd, 0.42);
+  s.close();
+});
+

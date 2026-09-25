@@ -240,6 +240,16 @@ CREATE TABLE IF NOT EXISTS department_budgets (
 
 const now = () => new Date().toISOString();
 
+/** Normalize any parseable ISO timestamp to UTC Z form. Rejects garbage. */
+function normalizeOccurredAt(value?: string): string {
+  if (value === undefined || value === "") return now();
+  const t = Date.parse(value);
+  if (!Number.isFinite(t)) {
+    throw new ValidationError('occurred_at must be a valid ISO timestamp');
+  }
+  return new Date(t).toISOString();
+}
+
 function rowToAgent(r: Record<string, unknown>): Agent {
   return {
     id: r.id as string,
@@ -883,7 +893,9 @@ export class SqliteStorage implements Storage {
       throw new ValidationError('cost_usd must be a finite, non-negative number or null');
     }
     const id = randomUUID();
-    const occurred_at = input.occurred_at ?? now();
+    // Store UTC Z so since/window filters stay chronological even when clients
+    // send offset ISOs. analyticsSummary also uses datetime() for defense-in-depth.
+    const occurred_at = normalizeOccurredAt(input.occurred_at);
     this.db
       .prepare(
         `INSERT INTO events (id, agent_id, type, occurred_at, actor, summary, data, tokens_in, tokens_out, cost_usd, duration_ms)
@@ -1110,7 +1122,10 @@ export class SqliteStorage implements Storage {
   analyticsSummary(opts?: { since?: string | null; window?: AnalyticsSummary['window'] }): AnalyticsSummary {
     const since = opts?.since ?? null;
     const windowLabel: AnalyticsSummary['window'] = opts?.window ?? (since ? 'custom' : 'all');
-    const sinceClause = since ? 'AND e.occurred_at >= ?' : '';
+    // Chronological compare via SQLite datetime() — lexicographic TEXT compare on
+    // offset ISOs wrongly drops in-window events (e.g. 08:00-05:00 vs 12:00Z).
+    // Ingest also normalizes to UTC Z; datetime() covers legacy/raw offset rows.
+    const sinceClause = since ? 'AND datetime(e.occurred_at) >= datetime(?)' : '';
     const sinceParams: SQLInputValue[] = since ? [since] : [];
 
     const rate = (completed: number, failed: number): number | null => {
