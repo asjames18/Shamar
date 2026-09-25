@@ -1,0 +1,1 @@
+{"description":"Provider adapters for the Shamar control plane: Ollama first, cloud adapters later (ADR-0004). Zero runtime dependencies.","license":"Apache-2.0","main":"dist/index.js","name":"@shamar/providers","private":true,"type":"commonjs","types":"dist/index.d.ts","version":"0.1.0"}

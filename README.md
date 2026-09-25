@@ -1,61 +1,84 @@
 # Shamar
 
-> **Shamar** (Hebrew שמר — "to keep, guard, watch over") — Mission control for humans, agents, models, tools, and autonomous work. Open-source infrastructure for managing AI workforces. Name selected 2026-09-23 (see `docs/naming-screen-round3-shamar.md`); "AgentOS" was only ever the temporary working-directory name.
+[![CI](https://github.com/asjames18/Shamar/actions/workflows/ci.yml/badge.svg)](https://github.com/asjames18/Shamar/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
-**Mission Control for an organization's AI workforce.** An open-source control plane to register, observe, govern, and operate AI agents — no matter which provider, framework, or model they use.
+> **Shamar** (שמר — Hebrew for "to keep, guard, watch over") is mission control for your AI workforce: register every agent, see everything they do, know what they cost. Provider-neutral, local-first, free to run.
 
-**The 60-second version:** organizations are accumulating AI agents (OpenAI, Anthropic, local Ollama models, third-party platforms, internal builds) with no single place to answer *"what agents do we have, what are they doing, what do they cost, and can they be trusted?"* Shamar is that place: an agent registry, an event/activity log, provider connections, budgets, and a dashboard — provider-neutral, local-first, and free to run.
+🚀 **Try the live demo — no install:** https://shamar-site.asjames18.workers.dev/demo
 
-## Quickstart
+## The problem
+
+Organizations are accumulating AI agents — OpenAI and Anthropic assistants, local Ollama models, third-party platforms, internal builds — with no single place to answer *"what agents do we have, what are they doing, what do they cost, and can they be trusted?"* Agents get created in Slack threads and scripts, run with personal API keys, and nobody can audit them.
+
+## What Shamar is
+
+An open-source control plane for AI agents:
+
+- **Agent registry** — identity, owner, model, provider, tools, and budget for every agent.
+- **Event log** — append-only record of what agents actually do (`agent.started`, `model.called`, `task.completed`…).
+- **Provider connections** — local Ollama for free, plus OpenRouter BYOK (key in `OPENROUTER_API_KEY`); OpenAI/Anthropic/Gemini next. Documented APIs only — no scraping, no session hacks.
+- **Dashboard** — total/active agents, recent activity, usage and cost.
+- **REST API + SDK** — external agents register, heartbeat, and report; any framework can plug in.
+
+**Principles:** zero-cost local operation (SQLite, Ollama). Provider-neutral core. Security from day one (secrets in env only, keys hashed, prompt/response bodies never stored). Evidence over hype — unknown costs stay `null`, never guessed.
+
+## Status
+
+Phase 0 (research + foundation) ✅ · Phase 1 vertical slice ✅ · Phase 2 Ollama adapter ✅ against a mock daemon (one real-daemon run still pending) · Phase 3 started — OpenRouter BYOK adapter ✅ against a mock (live check needs a real key). Full picture: [ROADMAP.md](ROADMAP.md) · [docs/STATUS.md](docs/STATUS.md).
+
+## Quickstart — 5 minutes
+
+Prerequisites: Node ≥ 22, git, npm. (Docker is optional — the compose path is listed but untested in some environments; see CONTRIBUTING.md.)
 
 ```bash
-git clone <repo-url> && cd <repo>
-cp .env.example .env
-docker compose up
+git clone https://github.com/asjames18/Shamar.git && cd Shamar
+npm install
+cp .env.example .env      # local-dev key + SQLite path; never commit .env
+npm run dev:api           # build + start the API at http://localhost:4000
 ```
 
-Then open:
+With the API running, seed a demo workforce and check it:
 
-- Dashboard: http://localhost:3000
-- API: http://localhost:4000/api/dashboard/summary
+```bash
+set -a && . ./.env && set +a    # load the local-dev key
+node scripts/seed-demo.js       # 4 demo agents + ~2 days of activity; idempotent by name
+curl -H "x-api-key: $AGENTOS_DEV_API_KEY" http://localhost:4000/api/dashboard/summary
+```
 
-Register your first agent and send events with the example client:
+Register your own agent and send events with the zero-dependency example client:
 
 ```bash
 cd examples && node register-and-report.js
 ```
 
-Watch the agent and its activity appear on the dashboard. No cloud account, no API credits, no paid model needed.
+Prefer Docker? `docker compose up` gives the full stack — API on `:4000`, web dashboard on `:3000`. (The compose path can't be verified in every environment; CONTRIBUTING.md says so explicitly.)
 
-Want a pre-populated demo workforce? Seed 4 demo agents with two days of realistic activity:
+## What works today
 
-```bash
-SHAMAR_API_KEY=<your-dev-key> node scripts/seed-demo.js
-```
-
-The seed script is idempotent (reuses agents by name) and leaves a fresh round of recent events each run so the dashboard's activity view stays alive.
-
-## What works today (Phase 0/1 skeleton)
-
-- Agent Registry: `GET/POST /api/agents`, `GET/PATCH/DELETE /api/agents/:id`
+- Agent registry: `GET/POST /api/agents`, `GET/PATCH/DELETE /api/agents/:id`, agent detail with usage rollups and activity timeline
 - Heartbeats: `POST /api/agents/:id/heartbeat`
-- Event ingestion: `POST /api/events` (validated, append-only)
+- Event ingestion: `POST /api/events` (validated, append-only; single + batch)
 - Dashboard summary: `GET /api/dashboard/summary`
-- Minimal web dashboard (total agents, active agents, recent activity)
-- Example client script demonstrating register → heartbeat → events
+- Web dashboard: totals, active agents, recent activity, add-agent form, clickable agent detail view
+- Provider model discovery: `GET /api/providers/:id/models` (Ollama installed models)
+- Provider health validation: `POST /api/providers/:id/validate` (real reachability check)
+- Test invocation: `POST /api/providers/:id/invoke` — prompt → response with real token counts and latency, recorded as a `model.called` event (prompt/response bodies are never stored; local cost is $0 by definition)
+- TypeScript SDK (zero runtime deps): `packages/sdk`
+- Demo seed script: `scripts/seed-demo.js`
 
 ## Repo layout
 
 ```
-/apps/api        REST API (Node + TypeScript)
-/apps/web        Dashboard (Next.js)
-/packages/types  Shared TS types: Agent, AgentEvent, Provider
-/packages/core   Registry domain logic (planned)
-/packages/providers  Provider adapters — Ollama first (planned)
-/packages/telemetry   Event schema + cost computation (planned)
+/apps/api        REST API (Node + TypeScript, zero runtime deps) — agents, events, providers, dashboard
+/apps/web        Dashboard UI (static HTML + nginx in Docker)
+/packages/types  Shared TS types: Agent, AgentEvent, Provider, ProviderAdapter
+/packages/providers  Provider adapters — Ollama + OpenRouter BYOK implemented; more cloud adapters planned
 /packages/sdk    TypeScript SDK — register/heartbeat/event helpers (zero deps)
+/packages/core, /packages/telemetry  Reserved for future extraction; currently empty
 /docs            Vision, roadmap, architecture, ADRs, competitive landscape
-/examples        Sample clients
+/examples        Sample clients (zero-dependency Node)
+/scripts         Demo seed script
 ```
 
 ## Docs
@@ -63,22 +86,15 @@ The seed script is idempotent (reuses agents by name) and leaves a fresh round o
 - [VISION.md](VISION.md) — the problem, principles, north star
 - [ROADMAP.md](ROADMAP.md) — phased plan from MVP to org view
 - [ARCHITECTURE.md](ARCHITECTURE.md) — modular monolith, data model, API
-- [docs/adr/](docs/adr/) — architecture decision records
+- [docs/adr/](docs/adr/) — architecture decision records (read before changing core design)
 - [docs/competitive-landscape.md](docs/competitive-landscape.md) — what's out there, gaps we exploit
 - [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md)
 - [CONTRIBUTORS.md](CONTRIBUTORS.md) — who builds and maintains Shamar
 
-## Principles
-
-- **Zero-cost local operation.** SQLite by default; Ollama for free local models. No mandatory cloud.
-- **Provider-neutral.** BYOK, official OAuth where offered, local models, OpenAI-compatible endpoints.
-- **Security from day one.** Secrets in env only, API keys hashed, no prompt/response bodies logged by default.
-- **Evidence over hype.** Unknown costs are recorded as unknown — never guessed.
-
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). Small, tested, documented PRs welcome. See [CONTRIBUTORS.md](CONTRIBUTORS.md) for who is credited.
+Small, tested, documented PRs welcome — see [CONTRIBUTING.md](CONTRIBUTING.md). New here? Start with a [good-first-issue draft](docs/good-first-issues/).
 
 ## License
 
-Apache 2.0 — see [LICENSE](LICENSE). License approved by Antonio 2026-09-23; tradeoff analysis in [docs/license-strategy.md](docs/license-strategy.md).
+**Apache 2.0** — see [LICENSE](LICENSE). Tradeoff analysis: [docs/license-strategy.md](docs/license-strategy.md).

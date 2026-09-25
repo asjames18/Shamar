@@ -28,6 +28,7 @@ It's early, and it's open source on purpose. If you're a builder who wants to wo
 https://github.com/asjames18/Shamar
 
 ## Notes
-- Post only AFTER the contributor-readiness sprint lands (CONTRIBUTING.md live, good first issues published) — otherwise the "builders welcome" line sends people to a repo that isn't ready for them.
+- DO NOT publish until Antonio judges the demo genuinely attractive — his call, no exceptions. The demo is the hook; a thin demo wastes the launch.
+- Post only AFTER (a) the contributor-readiness sprint lands AND (b) the demo-polish pass lands AND (c) Antonio says the demo is attractive enough. Otherwise the "builders welcome" line sends people to a repo/demo that isn't ready for them.
 - Consider a follow-up post with a 60-second screen recording of the demo once Antonio approves.
 - Show HN is a later step — wait until Phase 2 (Ollama adapter) or real external users exist.

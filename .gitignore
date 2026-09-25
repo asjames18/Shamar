@@ -21,7 +21,7 @@ build/
 out/
 
 # Data (local SQLite lives here in dev)
-/data/
+data/
 *.db
 *.db-journal
 *.sqlite

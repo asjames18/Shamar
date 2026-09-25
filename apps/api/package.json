@@ -9,5 +9,9 @@
     "start": "node dist/index.js"
   },
   "type": "commonjs",
-  "version": "0.1.0"
+  "version": "0.1.0",
+  "dependencies": {
+    "@control-plane/types": "0.1.0",
+    "@shamar/providers": "0.1.0"
+  }
 }

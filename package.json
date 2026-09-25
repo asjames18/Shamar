@@ -12,11 +12,11 @@
   "name": "ai-workforce-control-plane",
   "private": true,
   "scripts": {
-    "build": "tsc -b apps/api packages/types packages/sdk",
+    "build": "tsc -b packages/types packages/providers apps/api packages/sdk",
     "dev:api": "npm --workspace apps/api run dev",
-    "lint": "npx eslint apps/api/src packages/types/src packages/sdk/src --max-warnings=0",
-    "test": "npm run build && node --test apps/api/dist/test/*.test.js packages/sdk/dist/test/*.test.js",
-    "typecheck": "tsc -b apps/api packages/types packages/sdk --pretty"
+    "lint": "npx eslint apps/api/src packages/types/src packages/sdk/src packages/providers/src --max-warnings=0",
+    "test": "npm run build && node --test apps/api/dist/test/*.test.js packages/sdk/dist/test/*.test.js packages/providers/dist/test/*.test.js",
+    "typecheck": "tsc -b packages/types packages/providers apps/api packages/sdk --pretty"
   },
   "version": "0.1.0",
   "workspaces": [

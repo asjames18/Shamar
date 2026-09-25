@@ -8,7 +8,10 @@
  */
 import { createServer, IncomingMessage, ServerResponse } from 'node:http';
 import { scryptSync, timingSafeEqual } from 'node:crypto';
-import { openStorage, Storage, ValidationError } from './store.js';
+import { openStorage, Storage, ValidationError, ConflictError } from './store.js';
+import { adapterFor, NotImplementedError } from './providers.js';
+import { checkInvokePolicy, effectiveMaxTokens } from './policy.js';
+import type { InvokeRequest, ApprovalStatus } from '@control-plane/types';
 
 const PORT = Number(process.env.API_PORT ?? 4000);
 
@@ -108,6 +111,19 @@ export function createApp(storage: Storage) {
         const agent = storage.heartbeat(decodeURIComponent(hbMatch[1]));
         return agent ? send(res, 200, { agent }) : send(res, 404, { error: 'agent not found' });
       }
+      // Agent lifecycle actions (Phase 5): pause/resume/retire with
+      // server-side transition rules (retire is terminal), clone copies the
+      // config into a new idle agent. Each effective transition is recorded
+      // as an audit event on the agent's timeline.
+      const lifecycleMatch = path.match(/^\/api\/agents\/([^/]+)\/(pause|resume|retire|clone)$/);
+      if (lifecycleMatch && method === 'POST') {
+        const id = decodeURIComponent(lifecycleMatch[1]);
+        const action = lifecycleMatch[2] as 'pause' | 'resume' | 'retire' | 'clone';
+        const body = (await readJson(req)) as { reason?: unknown; name?: unknown };
+        const agent =
+          action === 'clone' ? storage.cloneAgent(id, body.name) : storage.lifecycleTransition(id, action, body.reason);
+        return agent ? send(res, 200, { agent }) : send(res, 404, { error: 'agent not found' });
+      }
 
       // --- events -------------------------------------------------------
       if (path === '/api/events' && method === 'POST') {
@@ -133,11 +149,283 @@ export function createApp(storage: Storage) {
         const provider = storage.createProvider((await readJson(req)) as never);
         return send(res, 201, { provider });
       }
+      const modelsMatch = path.match(/^\/api\/providers\/([^/]+)\/models$/);
+      if (modelsMatch && method === 'GET') {
+        const provider = storage.getProvider(decodeURIComponent(modelsMatch[1]));
+        if (!provider) return send(res, 404, { error: 'provider not found' });
+        let adapter;
+        try {
+          adapter = adapterFor(provider);
+        } catch (err) {
+          if (err instanceof NotImplementedError) return send(res, 501, { error: err.message });
+          throw err;
+        }
+        try {
+          return send(res, 200, { models: await adapter.listModels() });
+        } catch (err) {
+          return send(res, 502, { error: (err as Error).message });
+        }
+      }
       const valMatch = path.match(/^\/api\/providers\/([^/]+)\/validate$/);
       if (valMatch && method === 'POST') {
-        // Honest stub: live credential validation lands with the provider
-        // adapters in Phase 2/3 (ADR-0004). We refuse to fake a check.
-        return send(res, 501, { error: 'credential validation not implemented yet (roadmap Phase 2/3)' });
+        const provider = storage.getProvider(decodeURIComponent(valMatch[1]));
+        if (!provider) return send(res, 404, { error: 'provider not found' });
+        let adapter;
+        try {
+          adapter = adapterFor(provider);
+        } catch (err) {
+          if (err instanceof NotImplementedError) return send(res, 501, { error: err.message });
+          throw err;
+        }
+        const result = await adapter.validateCredentials();
+        storage.setProviderStatus(provider.id, result.ok ? 'healthy' : 'unhealthy');
+        return send(res, 200, { ...result, status: result.ok ? 'healthy' : 'unhealthy' });
+      }
+      const invokeMatch = path.match(/^\/api\/providers\/([^/]+)\/invoke$/);
+      if (invokeMatch && method === 'POST') {
+        const provider = storage.getProvider(decodeURIComponent(invokeMatch[1]));
+        if (!provider) return send(res, 404, { error: 'provider not found' });
+        const body = (await readJson(req)) as {
+          agent_id?: unknown;
+          model?: unknown;
+          messages?: unknown;
+          max_tokens?: unknown;
+        };
+        if (typeof body.agent_id !== 'string' || !body.agent_id) throw new ValidationError('agent_id is required');
+        if (typeof body.model !== 'string' || !body.model.trim()) throw new ValidationError('model is required');
+        if (!Array.isArray(body.messages) || body.messages.length === 0) {
+          throw new ValidationError('messages must be a non-empty array');
+        }
+        const messages: InvokeRequest['messages'] = body.messages.map((m) => {
+          const role = (m as { role?: unknown })?.role;
+          const content = (m as { content?: unknown })?.content;
+          if (role !== 'system' && role !== 'user' && role !== 'assistant') {
+            throw new ValidationError('each message needs role: system|user|assistant');
+          }
+          if (typeof content !== 'string') throw new ValidationError('each message needs content: string');
+          return { role: role as 'system' | 'user' | 'assistant', content };
+        });
+        if (!storage.getAgent(body.agent_id)) throw new ValidationError(`unknown agent_id: ${body.agent_id}`);
+        const agent = storage.getAgent(body.agent_id) as NonNullable<ReturnType<typeof storage.getAgent>>;
+        // Autonomy gate (ADR-0006): an agent's level is enforced server-side
+        // BEFORE the budget gate — L0/L1 invokes never reach a provider.
+        // Fails closed with a policy.blocked audit event.
+        const policy = checkInvokePolicy(agent, storage);
+        if (!policy.allowed) {
+          storage.appendServerEvent({
+            agent_id: body.agent_id,
+            type: 'policy.blocked',
+            actor: 'system',
+            summary: `Model invoke blocked: ${policy.error}`,
+            data: { action: 'provider.invoke', reason: policy.reason, autonomy_level: agent.autonomy_level },
+          });
+          return send(res, 403, {
+            error: policy.error,
+            reason: policy.reason,
+            autonomy_level: agent.autonomy_level,
+          });
+        }
+        // L2 guardrail (ADR-0006): clamp max_tokens server-side for assisted agents.
+        const { value: effectiveMaxTokensValue, clamped: maxTokensClamped } = effectiveMaxTokens(
+          agent,
+          typeof body.max_tokens === 'number' ? body.max_tokens : undefined,
+        );
+        // Budget gate: an agent at/over its monthly budget cannot invoke models
+        // through the control plane. Checked BEFORE the provider is touched so
+        // no cost can be incurred. Fails closed with a policy.blocked audit event.
+        const budget = storage.budgetState(body.agent_id);
+        if (budget && budget.status === 'exceeded') {
+          storage.checkBudget(body.agent_id); // make sure budget.exceeded is on the trail
+          storage.appendServerEvent({
+            agent_id: body.agent_id,
+            type: 'policy.blocked',
+            actor: 'system',
+            summary: `Model invoke blocked: monthly budget $${budget.limit_usd.toFixed(2)} exceeded ($${budget.spend_month_usd.toFixed(2)} spent)`,
+            data: { action: 'provider.invoke', reason: 'budget_exceeded', budget },
+          });
+          return send(res, 403, {
+            error: 'monthly budget exceeded: model invokes are blocked for this agent',
+            budget,
+          });
+        }
+        // Department budget gate (ADR-0007): a department's shared monthly pool
+        // is a hard money cap — an agent in an exceeded department cannot invoke
+        // models through the control plane. Checked BEFORE the provider is
+        // touched so no cost can be incurred. Fails closed with a
+        // policy.blocked audit event.
+        const deptBudget = agent.department ? storage.departmentBudgetState(agent.department) : null;
+        if (deptBudget && deptBudget.status === 'exceeded') {
+          storage.checkDepartmentBudget(agent.department, body.agent_id); // make sure budget.exceeded is on the trail
+          storage.appendServerEvent({
+            agent_id: body.agent_id,
+            type: 'policy.blocked',
+            actor: 'system',
+            summary: `Model invoke blocked: department budget "${agent.department}" $${deptBudget.limit_usd.toFixed(2)} exceeded ($${deptBudget.spend_month_usd.toFixed(2)} spent)`,
+            data: { action: 'provider.invoke', reason: 'department_budget_exceeded', department: agent.department, budget: deptBudget },
+          });
+          return send(res, 403, {
+            error: `department monthly budget exceeded: model invokes are blocked for agents in "${agent.department}"`,
+            reason: 'department_budget_exceeded',
+            department: agent.department,
+            budget: deptBudget,
+          });
+        }
+        let adapter;
+        try {
+          adapter = adapterFor(provider);
+        } catch (err) {
+          if (err instanceof NotImplementedError) return send(res, 501, { error: err.message });
+          throw err;
+        }
+        const invokeReq: InvokeRequest = {
+          model: body.model,
+          messages,
+          ...(typeof effectiveMaxTokensValue === 'number' ? { max_tokens: effectiveMaxTokensValue } : {}),
+        };
+        let result;
+        try {
+          result = await adapter.invokeModel(invokeReq);
+        } catch (err) {
+          return send(res, 502, { error: (err as Error).message });
+        }
+        // Record the call on the agent's timeline. Prompt/response bodies are
+        // never persisted — only usage numbers, latency, and model identity.
+        const event = storage.appendServerEvent({
+          agent_id: body.agent_id,
+          type: 'model.called',
+          actor: 'agent',
+          summary: `Model call: ${result.model} (${result.usage.tokens_in}+${result.usage.tokens_out} tokens, ${result.latency_ms}ms)`,
+          data: {
+            model: result.model,
+            provider: provider.id,
+            provider_kind: provider.kind,
+            latency_ms: result.latency_ms,
+          },
+          tokens_in: result.usage.tokens_in,
+          tokens_out: result.usage.tokens_out,
+          cost_usd: adapter.estimateCost(result.usage),
+          duration_ms: result.latency_ms,
+        });
+        return send(res, 200, {
+          text: result.text,
+          usage: result.usage,
+          latency_ms: result.latency_ms,
+          model: result.model,
+          event,
+          policy: {
+            autonomy_level: agent.autonomy_level,
+            max_tokens_clamped: maxTokensClamped,
+            ...(maxTokensClamped ? { max_tokens_effective: effectiveMaxTokensValue } : {}),
+          },
+        });
+      }
+
+      // --- approvals (Phase 4: human-in-the-loop governance) --------------
+      if (path === '/api/approvals' && method === 'POST') {
+        const body = (await readJson(req)) as {
+          agent_id?: unknown;
+          title?: unknown;
+          detail?: unknown;
+          requested_by?: unknown;
+        };
+        const input = {
+          agent_id: body.agent_id,
+          title: body.title,
+          ...(typeof body.detail === 'string' ? { detail: body.detail } : {}),
+          ...(body.requested_by === 'agent' || body.requested_by === 'human' || body.requested_by === 'system'
+            ? { requested_by: body.requested_by }
+            : {}),
+        };
+        const approval = storage.requestApproval(input as never);
+        return send(res, 201, { approval });
+      }
+      if (path === '/api/approvals' && method === 'GET') {
+        return send(res, 200, {
+          approvals: storage.listApprovals({
+            agent_id: url.searchParams.get('agent_id') ?? undefined,
+            // Validated (and 400-rejected) inside listApprovals.
+            status: (url.searchParams.get('status') ?? undefined) as ApprovalStatus | undefined,
+          }),
+        });
+      }
+      const decisionMatch = path.match(/^\/api\/approvals\/([^/]+)\/(grant|deny)$/);
+      if (decisionMatch && method === 'POST') {
+        const id = decodeURIComponent(decisionMatch[1]);
+        const body = (await readJson(req)) as { decided_by?: unknown; decided_by_agent_id?: unknown; reason?: unknown };
+        // ADR-0006: exactly one decider — a human (decided_by) or an L5
+        // supervisor agent (decided_by_agent_id). Validated in the store.
+        const approval = storage.decideApproval(id, {
+          decision: (decisionMatch[2] === 'grant' ? 'granted' : 'denied') as 'granted' | 'denied',
+          ...(typeof body.decided_by === 'string' ? { decided_by: body.decided_by } : {}),
+          ...(typeof body.decided_by_agent_id === 'string' ? { decided_by_agent_id: body.decided_by_agent_id } : {}),
+          ...(typeof body.reason === 'string' && body.reason ? { reason: body.reason } : {}),
+        });
+        return approval ? send(res, 200, { approval }) : send(res, 404, { error: 'approval request not found' });
+      }
+
+      // --- organization -------------------------------------------------
+      if (path === '/api/org' && method === 'GET') {
+        return send(res, 200, { org: storage.orgView() });
+      }
+
+      // --- departments --------------------------------------------------
+      if (path === '/api/departments' && method === 'GET') {
+        return send(res, 200, { departments: storage.listDepartments() });
+      }
+      const deptBudgetMatch = path.match(/^\/api\/departments\/([^/]+)\/budget$/);
+      if (deptBudgetMatch) {
+        const deptName = decodeURIComponent(deptBudgetMatch[1]);
+        if (method === 'GET') {
+          const budget = storage.departmentBudgetState(deptName);
+          return budget ? send(res, 200, { budget }) : send(res, 404, { error: 'no budget set for this department' });
+        }
+        if (method === 'PUT') {
+          const body = (await readJson(req)) as { budget_monthly_usd?: unknown };
+          // Fail-closed validation (finite, non-negative, or null to clear)
+          // happens in the store; unknown/missing clears.
+          const budget = storage.setDepartmentBudget(deptName, {
+            budget_monthly_usd: (body.budget_monthly_usd ?? null) as number | null,
+          });
+          return send(res, 200, { ok: true, budget });
+        }
+      }
+
+
+      // --- analytics (Phase 6 first slice) --------------------------------
+      // Cost + task metrics by agent/department/model/provider.
+      // Default window: all-time. Optional ?since=<ISO> or ?window=24h|7d|30d|month.
+      // cost_usd sums only known/non-null values; value/hours-saved deferred.
+      if (path === '/api/analytics/summary' && method === 'GET') {
+        const windowParam = url.searchParams.get('window');
+        const sinceParam = url.searchParams.get('since');
+        const allowed = new Set(['24h', '7d', '30d', 'month']);
+        let since: string | null = null;
+        let windowLabel: 'all' | '24h' | '7d' | '30d' | 'month' | 'custom' = 'all';
+        if (windowParam) {
+          if (!allowed.has(windowParam)) {
+            throw new ValidationError('window must be one of: 24h, 7d, 30d, month');
+          }
+          windowLabel = windowParam as '24h' | '7d' | '30d' | 'month';
+          const ms =
+            windowParam === '24h' ? 24 * 3600 * 1000
+            : windowParam === '7d' ? 7 * 24 * 3600 * 1000
+            : windowParam === '30d' ? 30 * 24 * 3600 * 1000
+            : null;
+          if (windowParam === 'month') {
+            const d = new Date();
+            d.setUTCDate(1);
+            d.setUTCHours(0, 0, 0, 0);
+            since = d.toISOString();
+          } else {
+            since = new Date(Date.now() - (ms as number)).toISOString();
+          }
+        } else if (sinceParam) {
+          const t = Date.parse(sinceParam);
+          if (!Number.isFinite(t)) throw new ValidationError('since must be a valid ISO timestamp');
+          since = new Date(t).toISOString();
+          windowLabel = 'custom';
+        }
+        return send(res, 200, storage.analyticsSummary({ since, window: windowLabel }));
       }
 
       // --- dashboard ----------------------------------------------------
@@ -148,6 +436,7 @@ export function createApp(storage: Storage) {
       return send(res, 404, { error: 'not found' });
     } catch (err) {
       if (err instanceof ValidationError) return send(res, 400, { error: err.message });
+      if (err instanceof ConflictError) return send(res, 409, { error: err.message });
       if (err instanceof SyntaxError) return send(res, 400, { error: 'invalid JSON body' });
       console.error('request failed:', err);
       return send(res, 500, { error: 'internal server error' });

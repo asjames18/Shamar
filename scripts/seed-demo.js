@@ -18,7 +18,7 @@ const path = require('node:path');
 const BASE_URL = process.argv[2] || process.env.SHAMAR_BASE_URL || process.env.API_BASE_URL || 'http://localhost:4000';
 const API_KEY = process.argv[3] || process.env.SHAMAR_API_KEY || process.env.AGENTOS_DEV_API_KEY || '';
 if (!API_KEY) {
-  console.error('Missing API key: set SHAMAR_API_KEY (or AGENTOS_DEV_API_KEY), or pass it as argv[2].');
+  console.error('Missing API key: set SHAMAR_API_KEY (or AGENTOS_DEV_API_KEY), or pass the base URL and key as argv.');
   process.exit(1);
 }
 
