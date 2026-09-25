@@ -3,6 +3,20 @@
 Concise record of each work cycle: timestamp, task, changes, tests, risks, next task.
 
 
+## 2026-09-25 ~12:35 EDT — scripts: seed-demo --reset flag (GFI 05) (agent: justin/platform) — COMPLETE
+
+**Task selected:** Good-first-issue draft 05 — add `--reset` / `--reset=true` to `scripts/seed-demo.js` so contributors can wipe only known seeded demo agents (exact name constants) and reseed without deleting the SQLite file / user-created entities.
+
+**What changed:**
+- `scripts/seed-demo.js`: parse `--reset` / `--reset=true` out of argv (positional base-url/api-key unchanged); `resetDemoEntities()` deletes agents whose names exactly match the `AGENTS` constants via SDK `deleteAgent` (events cascade); demo provider row retained (no `DELETE /api/providers/:id` — noted, not scope-creeped); prints removal counts then normal seed summary. Without the flag, idempotent reuse by name unchanged.
+- Docs: README seed section + bullet; good-first-issues README + 05 marked done; 04 → PR #12; STATUS (PR #12 merged, this unit); this log.
+
+**Verification:** `npm run lint` · `npm run typecheck` · `npm test` (115/115) · `npm run build`; `node --check scripts/seed-demo.js` OK; live temp-DB: seed → idempotent reseed → `--reset` (before/after agent lists in PR body).
+
+**Security self-review:** no secrets; zero deps; deletion filter is exact seeded names only (never a loose "demo" pattern); no provider-delete endpoint added; no deploy.
+
+**Next:** remaining good-first-issue draft (06), or Antonio-blocked items (demo verdict, live BYOK, Phase 2 real-daemon).
+
 ## 2026-09-25 ~12:25 EDT — examples: Python register-and-report client (GFI 04) (agent: justin/platform) — COMPLETE
 
 **Task selected:** Good-first-issue draft 04 — port `examples/register-and-report.js` to stdlib-only Python (`urllib`/`json`/`os`/`sys`); new `examples/README.md`; docs catch-up (PR #11 GFI 03 merged).

@@ -6,17 +6,25 @@
  *
  * Usage:
  *   SHAMAR_API_KEY=... node scripts/seed-demo.js [base-url] [api-key]
+ *   SHAMAR_API_KEY=... node scripts/seed-demo.js --reset [base-url] [api-key]
  *   # or: AGENTOS_DEV_API_KEY=... node scripts/seed-demo.js
  *
- * Idempotent: agents/providers are matched by name and reused; each run
- * appends a fresh round of recent events so the dashboard "recent activity"
- * stays fresh. Event timestamps are spread over the last ~2 days; costs are
- * never asserted (server keeps cost_usd NULL per ADR-0003).
+ * Idempotent by default: agents/providers are matched by name and reused; each
+ * run appends a fresh round of recent events so the dashboard "recent activity"
+ * stays fresh. Pass --reset (or --reset=true) to delete only the known seeded
+ * demo agents (exact names) before seeding fresh. There is no DELETE
+ * /api/providers/:id yet, so the demo provider row is retained and reused.
+ * Event timestamps are spread over the last ~2 days; costs are never asserted
+ * (server keeps cost_usd NULL per ADR-0003).
  */
 const path = require('node:path');
 
-const BASE_URL = process.argv[2] || process.env.SHAMAR_BASE_URL || process.env.API_BASE_URL || 'http://localhost:4000';
-const API_KEY = process.argv[3] || process.env.SHAMAR_API_KEY || process.env.AGENTOS_DEV_API_KEY || '';
+const RAW_ARGS = process.argv.slice(2);
+const RESET = RAW_ARGS.some((a) => a === '--reset' || a === '--reset=true');
+const POSITIONAL = RAW_ARGS.filter((a) => !a.startsWith('--reset'));
+
+const BASE_URL = POSITIONAL[0] || process.env.SHAMAR_BASE_URL || process.env.API_BASE_URL || 'http://localhost:4000';
+const API_KEY = POSITIONAL[1] || process.env.SHAMAR_API_KEY || process.env.AGENTOS_DEV_API_KEY || '';
 if (!API_KEY) {
   console.error('Missing API key: set SHAMAR_API_KEY (or AGENTOS_DEV_API_KEY), or pass the base URL and key as argv.');
   process.exit(1);
@@ -90,7 +98,11 @@ const PROVIDERS = [
   { kind: 'ollama', name: 'Local Ollama', base_url: 'http://localhost:11434' },
 ];
 
-/** Backfilled task cycles: [dayOffsetMinutes, title, tokensIn, tokensOut, durationMs, failed?] */
+/** Exact seeded names — deletion filter must use these so user-created entities stay untouched. */
+const SEEDED_AGENT_NAMES = new Set(AGENTS.map((a) => a.name));
+const SEEDED_PROVIDER_NAMES = new Set(PROVIDERS.map((p) => p.name));
+
+/** Backfilled task cycles: [title, tokensIn, tokensOut, durationMs, failed?] */
 const WORK_CYCLES = [
   ['Q3 support backlog triage', 1840, 320, 42000, false],
   ['Draft replies for 12 tickets', 2310, 640, 61000, false],
@@ -106,6 +118,44 @@ async function raw(method, p, body) {
   const json = await res.json();
   if (!res.ok) throw new Error(`${method} ${p} -> ${res.status}: ${JSON.stringify(json)}`);
   return json;
+}
+
+/**
+ * Remove only entities created by this script (exact name match on AGENTS /
+ * PROVIDERS constants). Events cascade via DELETE /api/agents/:id.
+ * No DELETE /api/providers/:id exists — the demo provider row is retained.
+ */
+async function resetDemoEntities() {
+  const existing = await client.listAgents();
+  const seeded = existing.filter((a) => SEEDED_AGENT_NAMES.has(a.name));
+
+  let eventsRemoved = 0;
+  for (const agent of seeded) {
+    try {
+      const detail = await client.getAgentDetail(agent.id);
+      eventsRemoved += detail.usage?.events_total ?? 0;
+    } catch {
+      // Detail may fail for a corrupted row; still attempt delete.
+    }
+    await client.deleteAgent(agent.id);
+    console.log(`agent (removed): ${agent.name} ${agent.id}`);
+  }
+
+  const { providers } = await raw('GET', '/api/providers');
+  const seededProviders = providers.filter((p) => SEEDED_PROVIDER_NAMES.has(p.name));
+  let providersRemoved = 0;
+  if (seededProviders.length > 0) {
+    // Known limitation: no DELETE /api/providers/:id — leave the row; ensureProviders will reuse it.
+    for (const p of seededProviders) {
+      console.log(`provider (retained, no DELETE /api/providers/:id): ${p.name} ${p.id}`);
+    }
+  }
+
+  console.log(
+    `reset: removed ${seeded.length} demo agent(s), ${providersRemoved} demo provider(s), ` +
+    `${eventsRemoved} event(s) (cascaded with agents)` +
+    (seededProviders.length > 0 ? `; ${seededProviders.length} demo provider row(s) retained` : ''),
+  );
 }
 
 async function ensureAgents() {
@@ -170,6 +220,10 @@ function backfillFor(agent, startMinsAgo) {
 }
 
 async function main() {
+  if (RESET) {
+    await resetDemoEntities();
+  }
+
   const agents = await ensureAgents();
   await ensureProviders();
 
