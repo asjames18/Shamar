@@ -43,6 +43,7 @@ With the API running, seed a demo workforce and check it:
 ```bash
 set -a && . ./.env && set +a    # load the local-dev key
 node scripts/seed-demo.js       # 4 demo agents + ~2 days of activity; idempotent by name
+node scripts/seed-demo.js --reset   # delete only known seeded demo agents (exact names), then seed fresh
 curl -H "x-api-key: $AGENTOS_DEV_API_KEY" http://localhost:4000/api/dashboard/summary
 ```
 
@@ -65,7 +66,7 @@ Prefer Docker? `docker compose up` gives the full stack — API on `:4000`, web 
 - Provider health validation: `POST /api/providers/:id/validate` (real reachability check)
 - Test invocation: `POST /api/providers/:id/invoke` — prompt → response with real token counts and latency, recorded as a `model.called` event (prompt/response bodies are never stored; local cost is $0 by definition)
 - TypeScript SDK (zero runtime deps): `packages/sdk`
-- Demo seed script: `scripts/seed-demo.js`
+- Demo seed script: `scripts/seed-demo.js` (optional `--reset` / `--reset=true` to wipe known seeded demo agents by exact name, then reseed)
 
 ## Repo layout
 

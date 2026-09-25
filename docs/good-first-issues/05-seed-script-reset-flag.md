@@ -1,3 +1,5 @@
+**Status:** done (implemented in `feat/seed-script-reset-flag`) — `--reset` / `--reset=true` deletes only exact known seeded demo agents, then seeds fresh; demo provider row retained (no DELETE /api/providers/:id).
+
 # Draft issue — `--reset` flag for the demo seed script
 
 **Suggested labels:** `good-first-issue`, `enhancement`
@@ -15,17 +17,17 @@ make the demo loop tighter.
 
 ## Acceptance criteria
 
-- [ ] `node scripts/seed-demo.js --reset` (also accept `--reset=true`)
+- [x] `node scripts/seed-demo.js --reset` (also accept `--reset=true`)
       deletes the seeded demo agents and demo provider **by their known seed
       names** and then seeds fresh. Exit code 0 on success.
-- [ ] Without the flag, behavior is unchanged (idempotent reuse by name).
-- [ ] The flag only touches entities created by the seed script — it must not
+- [x] Without the flag, behavior is unchanged (idempotent reuse by name).
+- [x] The flag only touches entities created by the seed script — it must not
       delete agents or providers the user created themselves. Match on the
       exact seeded names, not on a pattern like "demo".
-- [ ] Print a short summary: how many demo agents/providers/events were
+- [x] Print a short summary: how many demo agents/providers/events were
       removed, then the normal seed summary.
-- [ ] Update the seed-script section of `README.md` with the new flag.
-- [ ] `npm run lint`, `npm run typecheck`, `npm test`, `npm run build` all
+- [x] Update the seed-script section of `README.md` with the new flag.
+- [x] `npm run lint`, `npm run typecheck`, `npm test`, `npm run build` all
       pass (script is plain JS — at minimum `node --check` it and do a live
       run against a temp DB, like the original verification did).
 
