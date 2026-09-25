@@ -1,4 +1,4 @@
-**Status:** done (implemented in `feat/api-get-provider-by-id`)
+**Status:** done (PR #10 — implemented in `feat/api-get-provider-by-id`)
 
 # Draft issue — Add `GET /api/providers/:id`
 

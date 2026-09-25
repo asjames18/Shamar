@@ -3,6 +3,22 @@
 Concise record of each work cycle: timestamp, task, changes, tests, risks, next task.
 
 
+## 2026-09-25 ~12:05 EDT — API sanitize GET /api/events ?limit= (GFI 03) (agent: justin/platform) — COMPLETE
+
+**Task selected:** Good-first-issue draft 03 — `GET /api/events?limit=abc` was `Number('abc')=NaN` → SQLite datatype mismatch → 500. **Chosen behavior: return 400** via existing `ValidationError` (`limit must be a number`); do NOT silently fall back to 50. Negative/zero/fractional/large keep store clamp 1–500.
+
+**What changed:**
+- `apps/api/src/server.ts`: parse `url.searchParams.get('limit')`; reject non-finite with `ValidationError` → 400; omit when absent/empty.
+- `apps/api/src/store.ts`: optional NaN defense in `queryEvents` (finite-or-default-50) before existing 1–500 clamp.
+- `apps/api/src/test/api.test.ts`: `?limit=abc` → 400; `?limit=10` works (≤10); `?limit=99999` clamps to ≤500 rows.
+- Docs: good-first-issues README + 03 marked done (400 choice); 02 → PR #10; STATUS (PR #10 merged, this unit); this log.
+
+**Verification:** `npm run lint` — `npm run typecheck` — `npm test` (115/115) — `npm run build`.
+
+**Security self-review:** no secrets; validation fail-closed at HTTP layer; no deploy; clamp unchanged for oversized values.
+
+**Next:** remaining good-first-issue drafts (04–06), or Antonio-blocked items (demo verdict, live BYOK, Phase 2 real-daemon).
+
 ## 2026-09-25 ~11:52 EDT — API GET /api/providers/:id (GFI 02) (agent: justin/platform) — COMPLETE
 
 **Task selected:** Good-first-issue draft 02 — add `GET /api/providers/:id` returning `{ provider }` list-item shape behind API-key auth; 404 `provider not found`; exact-match `$`-anchored regex; tests; docs catch-up (PR #9 deleteAgent merged).

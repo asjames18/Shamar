@@ -982,7 +982,8 @@ export class SqliteStorage implements Storage {
   }
 
   queryEvents(opts: { agent_id?: string; type?: string; limit?: number }): AgentEvent[] {
-    const limit = Math.min(Math.max(opts.limit ?? 50, 1), 500);
+    const rawLimit = opts.limit != null && Number.isFinite(opts.limit) ? opts.limit : 50;
+    const limit = Math.min(Math.max(rawLimit, 1), 500);
     const conds: string[] = [];
     const vals: SQLInputValue[] = [];
     if (opts.agent_id) { conds.push('agent_id = ?'); vals.push(opts.agent_id); }

@@ -1,3 +1,5 @@
+**Status:** done (implemented in `feat/api-sanitize-event-limit`) — **chosen behavior: 400** via `ValidationError` (`limit must be a number`); do NOT silently fall back to 50.
+
 # Draft issue — Sanitize `?limit=` on `GET /api/events`
 
 **Suggested labels:** `good-first-issue`, `bug`
@@ -19,15 +21,15 @@ mismatch`.
 
 ## Acceptance criteria
 
-- [ ] `GET /api/events?limit=abc` returns **400** `{ error: ... }` with a
+- [x] `GET /api/events?limit=abc` returns **400** `{ error: ... }` with a
       human-readable message (e.g. `limit must be a number`), not a 500.
   - Alternative acceptable behavior: silently fall back to the default limit
     of 50. Pick one and document it in the issue you publish; don't do both.
-- [ ] Negative, zero, and fractional values keep the existing clamp behavior
+- [x] Negative, zero, and fractional values keep the existing clamp behavior
       (1–500); large values still clamp to 500.
-- [ ] API test in `apps/api/src/test/api.test.ts`: `?limit=abc` → 400,
+- [x] API test in `apps/api/src/test/api.test.ts`: `?limit=abc` → 400,
       `?limit=10` still works, `?limit=99999` clamps to ≤ 500 rows.
-- [ ] `npm run lint`, `npm run typecheck`, `npm test`, `npm run build` all pass.
+- [x] `npm run lint`, `npm run typecheck`, `npm test`, `npm run build` all pass.
 
 ## Hints
 

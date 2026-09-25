@@ -1,6 +1,6 @@
 # STATUS — Shamar (living snapshot)
 
-_Last updated: 2026-09-25 ~11:52 EDT.
+_Last updated: 2026-09-25 ~12:05 EDT.
 
 ## Right now
 
@@ -12,7 +12,7 @@ _Last updated: 2026-09-25 ~11:52 EDT.
 
 **Phase 4 governance — first slice done (2026-09-23 ~20:00)** — human approval workflow live: `POST /api/approvals`, `GET /api/approvals?agent_id=&status=`, `POST /api/approvals/:id/grant|deny`; `approval.requested/granted/denied` events in the audit trail; double-decide fails closed; `pending_approvals` on dashboard summary + agent detail; web dashboard card + per-agent Grant/Deny buttons. Tests 75/75.
 
-**Phase 4 governance — third slice done (2026-09-23 ~21:45)** — autonomy-level policy rules (L0–L5) with server-side enforcement (ADR-0006): L0 invokes always blocked, L1 needs a human grant inside a trailing 24h window, L2 gets max_tokens clamped to 1024, L3/L4/L5 invoke subject to the existing budget gate; new agents default to L3 (Standard). L5 supervisors can grant/deny approvals for agents that list them as `supervisor_agent_id` (decided_by recorded as `agent:<id>`, audit actor `agent`). Denials emit `policy.blocked` and fail closed. Dashboard agent detail shows a labeled autonomy badge (Monitored → Supervisor) with a policy description tooltip. Tests 86/86; E2E verified on a live API (L0 invoke → 403 autonomy_l0 + audit event).
+**Phase 4 governance — third slice done (2026-09-23 ~21:45)** — autonomy-level policy rules (L0–L5) with server-side enforcement (ADR-0006): L0 invokes always blocked, L1 needs a human grant inside a trailing 24h window, L2 gets max_tokens clamped to 1024, L3/L4/L5 invoke subject to the existing budget gate; new agents default to L3 (Standard). L5 supervisors can grant/deny approvals for agents that list them as `supervisor_agent_id` (decided_by recorded as `agent:<id>`, audit actor `agent`). Denials emit `policy.blocked` and fail closed. Dashboard agent detail shows a labeled autonomy badge (Monitored → Supervisor) with a policy description tooltip. Tests 115/115 — lint clean — typecheck clean — build clean (verified 2026-09-25 ~12:05 EDT).
 
 **Phase 4 governance — second slice done (2026-09-23 ~20:30)** — per-agent monthly budgets live: `budget.warning` at 80% and `budget.exceeded` at 100% (edge-triggered, once per month), `POST /api/providers/:id/invoke` returns 403 + emits `policy.blocked` when the agent is at budget (gate runs before any provider call, so no cost can be incurred); `budget` block on agent detail; web dashboard budget meter (ok/warning/exceeded). Spend counts only real reported costs — unknown stays out. Tests 78/78.
 
@@ -47,7 +47,8 @@ _Last updated: 2026-09-25 ~11:52 EDT.
 - **PR #7** (`feat/phase6-value-hours-saved`) merged to main (`f87805f`) — Phase 6 COMPLETE.
 - **PR #8** (`feat/sdk-lifecycle-methods`) merged to main (`c4e3c06`) — SDK `pause`/`resume`/`retire`/`clone` (good-first-issue 07).
 - **PR #9** (`feat/sdk-delete-agent`) merged to main (`1790d66`) — SDK `deleteAgent` (good-first-issue 01).
-- **This PR:** `feat/api-get-provider-by-id` — API `GET /api/providers/:id` (good-first-issue 02) — done in this PR (do not merge until reviewed).
+- **PR #10** (`feat/api-get-provider-by-id`) merged to main (`1e9bce0`) — API `GET /api/providers/:id` (good-first-issue 02).
+- **This PR:** `feat/api-sanitize-event-limit` — sanitize `GET /api/events?limit=` (good-first-issue 03): non-numeric → **400** `limit must be a number` (not silent default 50); store still clamps 1–500.
 ## Blockers / waiting on Antonio
 
 - **Real-daemon Ollama verification** — `ollama pull llama3.2`, then one invoke via the API. Needs his machine; closes Phase 2.
@@ -67,4 +68,4 @@ cp .env.example .env && docker compose up   # api :4000, web :3000
 
 ## Health
 
-Tests 113/113 — lint clean — typecheck clean — build clean (verified 2026-09-25 ~11:52).
+Tests 115/115 — lint clean — typecheck clean — build clean (verified 2026-09-25 ~12:05 EDT).
