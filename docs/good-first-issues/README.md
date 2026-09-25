@@ -28,8 +28,8 @@ is ready for public contributors.
 |---|-------|--------|
 | 01 | [Add `deleteAgent` to the SDK](01-sdk-delete-agent.md) — **done** (PR #9) | S |
 | 02 | [Add `GET /api/providers/:id`](02-api-get-provider-by-id.md) — **done** (PR #10) | S |
-| 03 | [Sanitize `?limit=` on `GET /api/events`](03-api-sanitize-event-limit.md) — **done** (this PR; 400 not silent default) | S |
-| 04 | [Python example client (stdlib only)](04-examples-python-client.md) | M |
+| 03 | [Sanitize `?limit=` on `GET /api/events`](03-api-sanitize-event-limit.md) — **done** (PR #11) | S |
+| 04 | [Python example client (stdlib only)](04-examples-python-client.md) — **done** (this PR) | M |
 | 05 | [`--reset` flag for the demo seed script](05-seed-script-reset-flag.md) | S |
 | 06 | [Dashboard: provider list with health status](06-dashboard-provider-health.md) | M |
 | 07 | [SDK: lifecycle methods (`pause`, `resume`, `retire`, `clone`)](07-sdk-lifecycle-methods.md) — **done** (PR #8) | S |

@@ -1,3 +1,5 @@
+**Status:** done (implemented in `feat/examples-python-client`) — stdlib-only Python port of `examples/register-and-report.js`; new `examples/README.md`.
+
 # Draft issue — Python example client (stdlib only)
 
 **Suggested labels:** `good-first-issue`, `documentation`
@@ -15,19 +17,19 @@ second consumer of the API contract.
 
 ## Acceptance criteria
 
-- [ ] `examples/register-and-report.py` using **only the Python standard
+- [x] `examples/register-and-report.py` using **only the Python standard
       library** (`urllib`, `json`, `os`, `sys`) — zero pip dependencies.
-- [ ] Mirrors the JS script's flow and CLI surface: base URL from
+- [x] Mirrors the JS script's flow and CLI surface: base URL from
       `sys.argv[1]` or `SHAMAR_BASE_URL`/`API_BASE_URL` (default
       `http://localhost:4000`), API key from `sys.argv[2]` or
       `SHAMAR_API_KEY`/`AGENTOS_DEV_API_KEY`; clear error if no key is set.
-- [ ] Registers an agent, sends a heartbeat, submits the same three events,
+- [x] Registers an agent, sends a heartbeat, submits the same three events,
       and prints the created agent id + a link to the dashboard detail view.
-- [ ] Running it against a live API produces an agent + events visible on the
+- [x] Running it against a live API produces an agent + events visible on the
       dashboard (verify manually; describe what you saw in the PR).
-- [ ] A short `examples/README.md` (new file) describing both example clients,
+- [x] A short `examples/README.md` (new file) describing both example clients,
       prerequisites, and the one-liner to run each.
-- [ ] No lint/typecheck/test/build regressions (`npm run lint`,
+- [x] No lint/typecheck/test/build regressions (`npm run lint`,
       `npm run typecheck`, `npm test`, `npm run build` pass; add `python3 -m
       py_compile` to your own verification and mention it in the PR).
 
