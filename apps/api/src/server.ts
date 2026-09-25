@@ -149,6 +149,11 @@ export function createApp(storage: Storage) {
         const provider = storage.createProvider((await readJson(req)) as never);
         return send(res, 201, { provider });
       }
+      const providerMatch = path.match(/^\/api\/providers\/([^/]+)$/);
+      if (providerMatch && method === 'GET') {
+        const provider = storage.getProvider(decodeURIComponent(providerMatch[1]));
+        return provider ? send(res, 200, { provider }) : send(res, 404, { error: 'provider not found' });
+      }
       const modelsMatch = path.match(/^\/api\/providers\/([^/]+)\/models$/);
       if (modelsMatch && method === 'GET') {
         const provider = storage.getProvider(decodeURIComponent(modelsMatch[1]));
