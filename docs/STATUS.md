@@ -1,6 +1,6 @@
 # STATUS — Shamar (living snapshot)
 
-_Last updated: 2026-09-23 ~22:10 EDT.
+_Last updated: 2026-09-25 ~09:15 EDT.
 
 ## Right now
 
@@ -22,7 +22,11 @@ _Last updated: 2026-09-23 ~22:10 EDT.
 
 **Phase 5 lifecycle actions — done (2026-09-23 ~23:15)** — `POST /api/agents/:id/{pause,resume,retire,clone}` with server-side transition rules (retire is terminal — pause/resume after retire fail closed with 409; already-in-state calls are idempotent no-ops); audit events `agent.paused/resumed/retired/cloned` on the agent's timeline (optional `reason` captured); clone copies config (department, owner, supervisor, provider, model, tools, permissions, budget, autonomy) into a new idle agent with `data.source_agent_id`; the invoke gate now fails closed for paused/retired agents (403 + `policy.blocked`, checked before autonomy/budget gates). Dashboard agent detail gained Lifecycle buttons (Pause/Resume conditional, Retire with confirm, Clone with name prompt). Tests 96/96; E2E verified on a live API (pause → resume → clone → retire → 409). SDK lifecycle methods left as good-first-issue draft 07. Phase 5 remainder: delegation management UI.
 
+**Phase 5 COMPLETE (2026-09-23 ~23:40)** — see below. **Phase 6 first slice done 2026-09-25** (analytics summary API + dashboard). Remaining Phase 6: value/hours-saved (deferred).
+
 **Phase 5 delegation management UI — done (2026-09-23 ~23:40)** — guarded `PATCH /api/agents/:id` supervisor assignment: target must exist, no self-supervision, no delegation cycles (all fail closed 400; the org view and L5 approval checks can never follow a corrupt chain); every owner/supervisor change emits an `agent.delegated` audit event with from/to. Dashboard agent detail gained a Delegation section (mobile-first): human-owner input with Save/Clear, supervisor `<select>` built from the live agent list, honest "supervisor was removed" callout for dangling links, server errors surfaced through the existing error path. Tests 97/97; E2E verified on a live API (assign → cycle attempt 400 → clear → owner set → `/api/org` delegation + owner rows correct). **Phase 5 COMPLETE.**
+
+**Phase 6 analytics — first slice done (2026-09-25 ~09:15)** — `GET /api/analytics/summary` rolls up known cost_usd (nulls excluded), task success/fail rates, avg duration, and error events by agent / department / model / provider. Optional `?window=24h|7d|30d|month` or `?since=<ISO>`; **default window is all-time**. Mobile-first Analytics section on the dashboard (totals cards + breakdown cards, window selector). Value / human-hours-saved metrics explicitly deferred. Tests 100/100 (3 new).
 
 ## Recently done
 
@@ -59,4 +63,4 @@ cp .env.example .env && docker compose up   # api :4000, web :3000
 
 ## Health
 
-Tests 81/81 → 86/86 → 90/90 → 93/93 → 96/96 → 97/97 · lint clean · typecheck clean · build clean (verified 2026-09-23 ~23:40).
+Tests 97/97 → 100/100 · lint clean · typecheck clean · build clean (verified 2026-09-25 ~09:15).

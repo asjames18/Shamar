@@ -28,6 +28,9 @@ import type {
   ApprovalInput,
   ApprovalRequest,
   ApprovalStatus,
+  AnalyticsSummary,
+  AnalyticsBreakdownRow,
+  AnalyticsTotals,
   DashboardSummary,
   EventActor,
   Provider,
@@ -154,6 +157,13 @@ export interface Storage {
   decideApproval(id: string, decision: ApprovalDecisionInput): ApprovalRequest | null;
   /** True when the agent has a granted approval decided within the trailing window (ADR-0006, L1 gate). */
   hasRecentGrant(agentId: string, windowMs: number): boolean;
+  // analytics (Phase 6 first slice)
+  /**
+   * Cost + task metrics rolled up by agent, department, model, and provider.
+   * Sums cost_usd only from known/non-null values (ADR-0003). Optional since
+   * ISO lower bound; null/omit = all-time. Value/hours-saved deferred.
+   */
+  analyticsSummary(opts?: { since?: string | null; window?: AnalyticsSummary['window'] }): AnalyticsSummary;
   // dashboard
   dashboardSummary(): DashboardSummary;
   close(): void;
@@ -229,6 +239,16 @@ CREATE TABLE IF NOT EXISTS department_budgets (
 );`;
 
 const now = () => new Date().toISOString();
+
+/** Normalize any parseable ISO timestamp to UTC Z form. Rejects garbage. */
+function normalizeOccurredAt(value?: string): string {
+  if (value === undefined || value === "") return now();
+  const t = Date.parse(value);
+  if (!Number.isFinite(t)) {
+    throw new ValidationError('occurred_at must be a valid ISO timestamp');
+  }
+  return new Date(t).toISOString();
+}
 
 function rowToAgent(r: Record<string, unknown>): Agent {
   return {
@@ -873,7 +893,9 @@ export class SqliteStorage implements Storage {
       throw new ValidationError('cost_usd must be a finite, non-negative number or null');
     }
     const id = randomUUID();
-    const occurred_at = input.occurred_at ?? now();
+    // Store UTC Z so since/window filters stay chronological even when clients
+    // send offset ISOs. analyticsSummary also uses datetime() for defense-in-depth.
+    const occurred_at = normalizeOccurredAt(input.occurred_at);
     this.db
       .prepare(
         `INSERT INTO events (id, agent_id, type, occurred_at, actor, summary, data, tokens_in, tokens_out, cost_usd, duration_ms)
@@ -1094,6 +1116,134 @@ export class SqliteStorage implements Storage {
       data: { approval_id: id, decided_by: decidedBy, ...(decision.reason ? { reason: decision.reason } : {}) },
     });
     return this.getApproval(id) as ApprovalRequest;
+  }
+
+
+  analyticsSummary(opts?: { since?: string | null; window?: AnalyticsSummary['window'] }): AnalyticsSummary {
+    const since = opts?.since ?? null;
+    const windowLabel: AnalyticsSummary['window'] = opts?.window ?? (since ? 'custom' : 'all');
+    // Chronological compare via SQLite datetime() — lexicographic TEXT compare on
+    // offset ISOs wrongly drops in-window events (e.g. 08:00-05:00 vs 12:00Z).
+    // Ingest also normalizes to UTC Z; datetime() covers legacy/raw offset rows.
+    const sinceClause = since ? 'AND datetime(e.occurred_at) >= datetime(?)' : '';
+    const sinceParams: SQLInputValue[] = since ? [since] : [];
+
+    const rate = (completed: number, failed: number): number | null => {
+      const n = completed + failed;
+      return n === 0 ? null : completed / n;
+    };
+    const avg = (sum: number, count: number): number | null => (count === 0 ? null : sum / count);
+
+    const totalsRow = this.db
+      .prepare(
+        `SELECT
+           COALESCE(SUM(CASE WHEN e.cost_usd IS NOT NULL THEN e.cost_usd ELSE 0 END), 0) AS cost_usd,
+           COALESCE(SUM(CASE WHEN e.cost_usd IS NOT NULL THEN 1 ELSE 0 END), 0) AS events_with_cost,
+           COALESCE(SUM(CASE WHEN e.type = 'task.completed' THEN 1 ELSE 0 END), 0) AS tasks_completed,
+           COALESCE(SUM(CASE WHEN e.type = 'task.failed' THEN 1 ELSE 0 END), 0) AS tasks_failed,
+           COALESCE(SUM(CASE WHEN e.duration_ms IS NOT NULL THEN e.duration_ms ELSE 0 END), 0) AS duration_sum,
+           COALESCE(SUM(CASE WHEN e.duration_ms IS NOT NULL THEN 1 ELSE 0 END), 0) AS events_with_duration,
+           COALESCE(SUM(CASE WHEN e.type IN ('task.failed', 'tool.failed') THEN 1 ELSE 0 END), 0) AS error_events,
+           COUNT(*) AS total_events
+         FROM events e
+         WHERE 1=1 ${sinceClause}`,
+      )
+      .get(...sinceParams) as Record<string, unknown>;
+
+    const totals: AnalyticsTotals = {
+      cost_usd: Number(totalsRow.cost_usd),
+      events_with_cost: Number(totalsRow.events_with_cost),
+      tasks_completed: Number(totalsRow.tasks_completed),
+      tasks_failed: Number(totalsRow.tasks_failed),
+      task_success_rate: rate(Number(totalsRow.tasks_completed), Number(totalsRow.tasks_failed)),
+      avg_duration_ms: avg(Number(totalsRow.duration_sum), Number(totalsRow.events_with_duration)),
+      events_with_duration: Number(totalsRow.events_with_duration),
+      error_events: Number(totalsRow.error_events),
+      total_events: Number(totalsRow.total_events),
+    };
+
+    const mapRows = (
+      rows: Record<string, unknown>[],
+      keyOf: (r: Record<string, unknown>) => string,
+      labelOf: (r: Record<string, unknown>) => string,
+    ): AnalyticsBreakdownRow[] =>
+      rows.map((r) => {
+        const completed = Number(r.tasks_completed);
+        const failed = Number(r.tasks_failed);
+        return {
+          key: keyOf(r),
+          label: labelOf(r),
+          cost_usd: Number(r.cost_usd),
+          events_with_cost: Number(r.events_with_cost),
+          tasks_completed: completed,
+          tasks_failed: failed,
+          task_success_rate: rate(completed, failed),
+          avg_duration_ms: avg(Number(r.duration_sum), Number(r.events_with_duration)),
+          events_with_duration: Number(r.events_with_duration),
+          error_events: Number(r.error_events),
+          total_events: Number(r.total_events),
+        };
+      });
+
+    const aggSelect = `
+           COALESCE(SUM(CASE WHEN e.cost_usd IS NOT NULL THEN e.cost_usd ELSE 0 END), 0) AS cost_usd,
+           COALESCE(SUM(CASE WHEN e.cost_usd IS NOT NULL THEN 1 ELSE 0 END), 0) AS events_with_cost,
+           COALESCE(SUM(CASE WHEN e.type = 'task.completed' THEN 1 ELSE 0 END), 0) AS tasks_completed,
+           COALESCE(SUM(CASE WHEN e.type = 'task.failed' THEN 1 ELSE 0 END), 0) AS tasks_failed,
+           COALESCE(SUM(CASE WHEN e.duration_ms IS NOT NULL THEN e.duration_ms ELSE 0 END), 0) AS duration_sum,
+           COALESCE(SUM(CASE WHEN e.duration_ms IS NOT NULL THEN 1 ELSE 0 END), 0) AS events_with_duration,
+           COALESCE(SUM(CASE WHEN e.type IN ('task.failed', 'tool.failed') THEN 1 ELSE 0 END), 0) AS error_events,
+           COUNT(*) AS total_events`;
+
+    const byAgent = this.db
+      .prepare(
+        `SELECT a.id AS agent_id, a.name AS agent_name, ${aggSelect}
+         FROM events e JOIN agents a ON a.id = e.agent_id
+         WHERE 1=1 ${sinceClause}
+         GROUP BY a.id, a.name
+         ORDER BY cost_usd DESC, total_events DESC, a.name ASC`,
+      )
+      .all(...sinceParams) as Record<string, unknown>[];
+
+    const byDepartment = this.db
+      .prepare(
+        `SELECT CASE WHEN a.department = '' OR a.department IS NULL THEN '(unassigned)' ELSE a.department END AS dept, ${aggSelect}
+         FROM events e JOIN agents a ON a.id = e.agent_id
+         WHERE 1=1 ${sinceClause}
+         GROUP BY dept
+         ORDER BY cost_usd DESC, total_events DESC, dept ASC`,
+      )
+      .all(...sinceParams) as Record<string, unknown>[];
+
+    const byModel = this.db
+      .prepare(
+        `SELECT CASE WHEN a.model = '' OR a.model IS NULL THEN '(unassigned)' ELSE a.model END AS model, ${aggSelect}
+         FROM events e JOIN agents a ON a.id = e.agent_id
+         WHERE 1=1 ${sinceClause}
+         GROUP BY model
+         ORDER BY cost_usd DESC, total_events DESC, model ASC`,
+      )
+      .all(...sinceParams) as Record<string, unknown>[];
+
+    const byProvider = this.db
+      .prepare(
+        `SELECT CASE WHEN a.provider = '' OR a.provider IS NULL THEN '(unassigned)' ELSE a.provider END AS provider, ${aggSelect}
+         FROM events e JOIN agents a ON a.id = e.agent_id
+         WHERE 1=1 ${sinceClause}
+         GROUP BY provider
+         ORDER BY cost_usd DESC, total_events DESC, provider ASC`,
+      )
+      .all(...sinceParams) as Record<string, unknown>[];
+
+    return {
+      since,
+      window: windowLabel,
+      totals,
+      by_agent: mapRows(byAgent, (r) => r.agent_id as string, (r) => r.agent_name as string),
+      by_department: mapRows(byDepartment, (r) => r.dept as string, (r) => r.dept as string),
+      by_model: mapRows(byModel, (r) => r.model as string, (r) => r.model as string),
+      by_provider: mapRows(byProvider, (r) => r.provider as string, (r) => r.provider as string),
+    };
   }
 
   dashboardSummary(): DashboardSummary {

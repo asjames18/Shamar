@@ -44,6 +44,8 @@ interface TestAgent {
 interface TestEvent {
   type: string;
   cost_usd: number | null;
+  occurred_at?: string;
+  id?: string;
 }
 interface AgentUsage {
   events_total: number;
@@ -128,6 +130,34 @@ interface ApiJson {
   recent_events?: Array<{ type: string; summary: string; occurred_at: string; tokens_in: number | null; tokens_out: number | null; duration_ms: number | null; cost_usd: number | null }>;
   last_check_in?: string | null;
   usage?: AgentUsage;
+  since?: string | null;
+  window?: string;
+  totals?: {
+    cost_usd: number;
+    events_with_cost: number;
+    tasks_completed: number;
+    tasks_failed: number;
+    task_success_rate: number | null;
+    avg_duration_ms: number | null;
+    events_with_duration: number;
+    error_events: number;
+    total_events: number;
+  };
+  by_agent?: Array<{
+    key: string;
+    label: string;
+    cost_usd: number;
+    events_with_cost: number;
+    tasks_completed: number;
+    tasks_failed: number;
+    task_success_rate: number | null;
+    avg_duration_ms: number | null;
+    error_events: number;
+    total_events: number;
+  }>;
+  by_department?: Array<{ key: string; label: string; cost_usd: number; tasks_completed: number; tasks_failed: number; task_success_rate: number | null }>;
+  by_model?: Array<{ key: string; cost_usd: number; tasks_completed: number; tasks_failed: number }>;
+  by_provider?: Array<{ key: string; cost_usd: number; tasks_completed: number; tasks_failed: number }>;
 }
 
 function req<T>(v: T | undefined | null, what: string): T {
@@ -1167,3 +1197,207 @@ test('delegation: PATCH supervisor/owner is guarded and audited', async () => {
   const ag = (list.json.agents ?? []).find((x) => x.id === a);
   assert.ok(ag, 'agent A still listed');
 });
+
+
+test('analytics: empty data returns zero totals', async () => {
+  // Fresh in-memory storage is shared across tests and already has agents/events
+  // from earlier cases — empty-data assertion uses the shape defaults and a
+  // future since window so no events match.
+  const future = new Date(Date.now() + 365 * 24 * 3600 * 1000).toISOString();
+  const { status, json } = await api('GET', `/api/analytics/summary?since=${encodeURIComponent(future)}`);
+  assert.equal(status, 200);
+  assert.equal(json.window, 'custom');
+  assert.equal(json.since, new Date(future).toISOString());
+  const totals = req(json.totals, 'totals');
+  assert.equal(totals.cost_usd, 0);
+  assert.equal(totals.events_with_cost, 0);
+  assert.equal(totals.tasks_completed, 0);
+  assert.equal(totals.tasks_failed, 0);
+  assert.equal(totals.task_success_rate, null);
+  assert.equal(totals.avg_duration_ms, null);
+  assert.equal(totals.error_events, 0);
+  assert.equal(totals.total_events, 0);
+  assert.deepEqual(json.by_agent, []);
+  assert.deepEqual(json.by_department, []);
+  assert.deepEqual(json.by_model, []);
+  assert.deepEqual(json.by_provider, []);
+});
+
+test('analytics: known costs summed; null costs excluded from totals', async () => {
+  const a = await api('POST', '/api/agents', {
+    name: 'Analytics Cost Agent',
+    department: 'Research',
+    provider: 'openrouter',
+    model: 'gpt-4o-mini',
+  });
+  assert.equal(a.status, 201);
+  const id = req(a.json.agent, 'agent').id;
+
+  // Known costs
+  let r = await api('POST', '/api/events', {
+    agent_id: id, type: 'model.called', summary: 'paid call', cost_usd: 0.12, duration_ms: 1000,
+  });
+  assert.equal(r.status, 201);
+  r = await api('POST', '/api/events', {
+    agent_id: id, type: 'model.called', summary: 'another paid', cost_usd: 0.08, duration_ms: 2000,
+  });
+  assert.equal(r.status, 201);
+  // Null / omitted cost — must stay out of cost totals (ADR-0003)
+  r = await api('POST', '/api/events', {
+    agent_id: id, type: 'model.called', summary: 'unknown cost', duration_ms: 500,
+  });
+  assert.equal(r.status, 201);
+
+  const { status, json } = await api('GET', '/api/analytics/summary');
+  assert.equal(status, 200);
+  assert.equal(json.window, 'all');
+  assert.equal(json.since, null);
+  const totals = req(json.totals, 'totals');
+  // At least our 0.20 from known costs; earlier tests may have added more known costs
+  assert.ok(totals.cost_usd >= 0.2 - 1e-9, `expected cost >= 0.20, got ${totals.cost_usd}`);
+  assert.ok(totals.events_with_cost >= 2);
+  // Our three model.called events: two with duration, one with duration — all three have duration_ms
+  assert.ok(totals.events_with_duration >= 3);
+  assert.ok(totals.avg_duration_ms !== null);
+
+  const row = (json.by_agent ?? []).find((x) => x.key === id);
+  assert.ok(row, 'agent breakdown row present');
+  assert.equal(row.label, 'Analytics Cost Agent');
+  assert.equal(row.cost_usd, 0.2);
+  assert.equal(row.events_with_cost, 2); // null cost excluded
+  assert.equal(row.avg_duration_ms, (1000 + 2000 + 500) / 3);
+});
+
+test('analytics: breakdowns by department/model/provider + success/fail rates', async () => {
+  const mk = async (name: string, dept: string, provider: string, model: string) => {
+    const r = await api('POST', '/api/agents', { name, department: dept, provider, model });
+    assert.equal(r.status, 201);
+    return req(r.json.agent, 'agent').id;
+  };
+  const research = await mk('Analytics Research Bot', 'Research', 'anthropic', 'claude-3-5');
+  const sales = await mk('Analytics Sales Bot', 'Sales', 'openai', 'gpt-4o');
+
+  // Research: 2 completed, 1 failed; one tool.failed; known cost 1.5
+  for (const [type, extra] of [
+    ['task.completed', { duration_ms: 100 }],
+    ['task.completed', { duration_ms: 300 }],
+    ['task.failed', { duration_ms: 50 }],
+    ['tool.failed', {}],
+    ['model.called', { cost_usd: 1.5, duration_ms: 400 }],
+  ] as Array<[string, Record<string, unknown>]>) {
+    const r = await api('POST', '/api/events', { agent_id: research, type, summary: type, ...extra });
+    assert.equal(r.status, 201);
+  }
+  // Sales: 1 completed, 0 failed; cost 0.5
+  let r = await api('POST', '/api/events', {
+    agent_id: sales, type: 'task.completed', summary: 'ok', duration_ms: 200, cost_usd: 0.5,
+  });
+  assert.equal(r.status, 201);
+
+  const { status, json } = await api('GET', '/api/analytics/summary');
+  assert.equal(status, 200);
+
+  const researchRow = (json.by_agent ?? []).find((x) => x.key === research);
+  assert.ok(researchRow);
+  assert.equal(researchRow.tasks_completed, 2);
+  assert.equal(researchRow.tasks_failed, 1);
+  assert.equal(researchRow.task_success_rate, 2 / 3);
+  assert.equal(researchRow.error_events, 2); // task.failed + tool.failed
+  assert.equal(researchRow.cost_usd, 1.5);
+
+  const salesRow = (json.by_agent ?? []).find((x) => x.key === sales);
+  assert.ok(salesRow);
+  assert.equal(salesRow.tasks_completed, 1);
+  assert.equal(salesRow.tasks_failed, 0);
+  assert.equal(salesRow.task_success_rate, 1);
+  assert.equal(salesRow.cost_usd, 0.5);
+
+  const deptResearch = (json.by_department ?? []).find((x) => x.key === 'Research');
+  assert.ok(deptResearch);
+  assert.equal(deptResearch.tasks_completed, 2);
+  assert.equal(deptResearch.tasks_failed, 1);
+  assert.ok(deptResearch.cost_usd >= 1.5);
+
+  const modelRow = (json.by_model ?? []).find((x) => x.key === 'claude-3-5');
+  assert.ok(modelRow);
+  assert.equal(modelRow.cost_usd, 1.5);
+
+  const providerRow = (json.by_provider ?? []).find((x) => x.key === 'anthropic');
+  assert.ok(providerRow);
+  assert.equal(providerRow.cost_usd, 1.5);
+
+  // window=30d accepted
+  r = await api('GET', '/api/analytics/summary?window=30d');
+  assert.equal(r.status, 200);
+  assert.equal(r.json.window, '30d');
+  assert.ok(typeof r.json.since === 'string');
+
+  // bad window rejected
+  r = await api('GET', '/api/analytics/summary?window=year');
+  assert.equal(r.status, 400);
+  assert.match(req(r.json.error, 'error'), /window/);
+
+  // auth required
+  r = await api('GET', '/api/analytics/summary', undefined, false);
+  assert.equal(r.status, 401);
+});
+
+test('analytics: ingest normalizes offset ISO occurred_at to UTC Z', async () => {
+  const a = await api('POST', '/api/agents', { name: 'Offset Normalize Agent' });
+  assert.equal(a.status, 201);
+  const id = req(a.json.agent, 'agent').id;
+  // 08:00-05:00 == 13:00Z — must be stored as UTC Z, not the raw offset string.
+  const offset = '2026-09-25T08:00:00-05:00';
+  const r = await api('POST', '/api/events', {
+    agent_id: id, type: 'task.completed', summary: 'offset ts', occurred_at: offset,
+  });
+  assert.equal(r.status, 201);
+  const ev = req(r.json.events as TestEvent, 'events');
+  assert.equal(ev.occurred_at, '2026-09-25T13:00:00.000Z');
+
+  const bad = await api('POST', '/api/events', {
+    agent_id: id, type: 'task.completed', summary: 'bad ts', occurred_at: 'not-a-timestamp',
+  });
+  assert.equal(bad.status, 400);
+  assert.match(req(bad.json.error, 'error'), /occurred_at/);
+});
+
+test('analytics: chronological since includes offset ISO that lex would drop', () => {
+  // Plant a raw/legacy offset row that bypasses ingest normalize. Lexicographic
+  // TEXT compare wrongly excludes it from a 12:00Z since window; datetime() must not.
+  const s = new SqliteStorage(':memory:');
+  const agent = s.createAgent({
+    name: 'Lex Trap Agent', department: 'QA', provider: 'ollama', model: 'llama3',
+  });
+  const offsetIso = '2026-09-25T08:00:00-05:00'; // chronologically 13:00Z
+  const since = '2026-09-25T12:00:00.000Z';
+  assert.equal(offsetIso >= since, false, 'precondition: lex compare would exclude this row');
+
+  const db = (s as unknown as { db: { prepare: (sql: string) => { run: (...args: unknown[]) => unknown } } }).db;
+  db.prepare(
+    `INSERT INTO events (id, agent_id, type, occurred_at, actor, summary, data, tokens_in, tokens_out, cost_usd, duration_ms)
+     VALUES (?, ?, 'task.completed', ?, 'agent', 'legacy offset', '{}', NULL, NULL, 0.42, NULL)`,
+  ).run('evt-lex-trap', agent.id, offsetIso);
+
+  // createAgent also emits agent.created at "now" (inside the since window), so
+  // assert on the planted cost row — not raw total_events.
+  const summary = s.analyticsSummary({ since, window: 'custom' });
+  assert.equal(summary.totals.events_with_cost, 1, 'offset ISO inside window must be included');
+  assert.equal(summary.totals.cost_usd, 0.42);
+  assert.ok(summary.totals.total_events >= 1);
+  assert.equal(summary.by_agent.length, 1);
+  assert.equal(summary.by_agent[0].key, agent.id);
+  assert.equal(summary.by_agent[0].cost_usd, 0.42);
+
+  // Outside the window chronologically: 06:00-05:00 == 11:00Z — before since.
+  // Lex would also exclude it; chronological must keep cost totals unchanged.
+  db.prepare(
+    `INSERT INTO events (id, agent_id, type, occurred_at, actor, summary, data, tokens_in, tokens_out, cost_usd, duration_ms)
+     VALUES (?, ?, 'task.completed', ?, 'agent', 'before window', '{}', NULL, NULL, 0.01, NULL)`,
+  ).run('evt-lex-before', agent.id, '2026-09-25T06:00:00-05:00');
+  const summary2 = s.analyticsSummary({ since, window: 'custom' });
+  assert.equal(summary2.totals.events_with_cost, 1, 'pre-window offset ISO must stay excluded');
+  assert.equal(summary2.totals.cost_usd, 0.42);
+  s.close();
+});
+

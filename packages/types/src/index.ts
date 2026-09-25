@@ -267,6 +267,76 @@ export interface DashboardSummary {
   recent_events: Array<Pick<AgentEvent, 'id' | 'agent_id' | 'type' | 'occurred_at' | 'summary'>>;
 }
 
+
+// ---------------------------------------------------------------- Analytics (Phase 6)
+
+/**
+ * One row of a cost/task breakdown (by agent, department, model, or provider).
+ * cost_usd sums only known/non-null event costs — unknown costs stay out of
+ * totals and are never fabricated (ADR-0003).
+ */
+export interface AnalyticsBreakdownRow {
+  /** Grouping key (agent id, department name, model string, or provider string). */
+  key: string;
+  /** Human-readable label when distinct from key (e.g. agent name). Same as key otherwise. */
+  label: string;
+  /** Sum of real reported cost_usd in the window (null costs excluded). */
+  cost_usd: number;
+  /** Number of events that contributed a known cost. */
+  events_with_cost: number;
+  tasks_completed: number;
+  tasks_failed: number;
+  /**
+   * tasks_completed / (tasks_completed + tasks_failed).
+   * Null when there were no completed or failed tasks in the window.
+   */
+  task_success_rate: number | null;
+  /**
+   * Average duration_ms across events that reported a duration.
+   * Null when no event in the group had duration_ms set.
+   */
+  avg_duration_ms: number | null;
+  /** Number of events that contributed to avg_duration_ms. */
+  events_with_duration: number;
+  /** Count of error-class events (task.failed + tool.failed) in the window. */
+  error_events: number;
+  /** Total events attributed to this group in the window. */
+  total_events: number;
+}
+
+/** Totals block shared by AnalyticsSummary (same metrics as a breakdown row, no key/label). */
+export interface AnalyticsTotals {
+  cost_usd: number;
+  events_with_cost: number;
+  tasks_completed: number;
+  tasks_failed: number;
+  task_success_rate: number | null;
+  avg_duration_ms: number | null;
+  events_with_duration: number;
+  error_events: number;
+  total_events: number;
+}
+
+/**
+ * GET /api/analytics/summary payload (Phase 6 first slice).
+ * Cost + task metrics rolled up by agent, department, model, and provider.
+ * Value/hours-saved metrics are deferred — not present here.
+ *
+ * Default window is all-time (since=null). Pass `since` (ISO timestamp) or
+ * `window` (24h|7d|30d|month) to narrow.
+ */
+export interface AnalyticsSummary {
+  /** Inclusive lower bound of the window as ISO; null means all-time. */
+  since: string | null;
+  /** Documented window label: 'all' | '24h' | '7d' | '30d' | 'month' | 'custom'. */
+  window: 'all' | '24h' | '7d' | '30d' | 'month' | 'custom';
+  totals: AnalyticsTotals;
+  by_agent: AnalyticsBreakdownRow[];
+  by_department: AnalyticsBreakdownRow[];
+  by_model: AnalyticsBreakdownRow[];
+  by_provider: AnalyticsBreakdownRow[];
+}
+
 // ---------------------------------------------------------------- Agent detail
 
 /**
