@@ -11,14 +11,14 @@ People judge a product by how it looks *and* by whether it works. So every phase
 - **Works the right way too.** Looking nice is table stakes — forms validate honestly, errors say what went wrong, statuses are truthful, nothing silently fails. If it's broken, fix function before polish; if it works, make it beautiful.
 - Applies to the dashboard/product UI first; the public demo + landing site follows the same standard.
 
-## Where we are (2026-09-25 ~16:36 EDT)
+## Where we are (2026-09-25 ~16:58 EDT)
 
 - **Done (feature work):** Phases 0, 1, 3, 4, 5, 6. Phase 0 foundation; Phase 1 vertical slice (exit criteria met 2026-09-23); **Phase 3 cloud adapters COMPLETE 2026-09-23 ~19:30** (OpenRouter + Anthropic + OpenAI + Gemini BYOK; live keys still need Antonio); **Phase 4 governance COMPLETE 2026-09-23 ~22:10**; **Phase 5 COMPLETE 2026-09-23 ~23:40**; **Phase 6 COMPLETE 2026-09-25** (analytics summary + value/human-hours-saved, ADR-0008).
 - **Phase 2 — implemented, close-out still open:** Ollama adapter is implemented and verified against a mock daemon; **real-daemon verification still pending** (Antonio's machine). Do **not** treat Phase 2 exit criteria as fully met until that run lands.
 - **Done:** GFI drafts 01–07 (PRs #8–#14) — queue cleared. SDK lifecycle (#8 / GFI 07), SDK deleteAgent (#9 / GFI 01), GET /api/providers/:id (#10 / GFI 02), sanitize event limit (#11 / GFI 03), Python example (#12 / GFI 04), seed --reset (#13 / GFI 05), dashboard Providers health (#14 / GFI 06 @ `af0f8ad`).
 - **Done:** Demo polish pass COMPLETE 2026-09-23 ~17:15 (simulated live stream, 6-agent fleet, visual polish). Launch post remains HELD pending Antonio's demo verdict.
-- **UI/UX polish pass (this unit):** Antonio-authorized standing UI track — focused dashboard clarity / spacing / hierarchy / empty-error-loading states / mobile table scroll / Providers consistency in `apps/web/index.html`. No new product features.
-- **Next / hold:** Hold for merge of `feat/dashboard-ui-ux-polish`, then pause inventing new GFI/MVP work until Antonio (via CoS) picks the next AgentOS unit. Antonio-gated remain: demo verdict / launch post; live BYOK for cloud providers; Phase 2 real-daemon Ollama; custom domain.
+- **UI/UX polish DONE:** PR #17 squash-merged @ `479c1f1` — dashboard clarity / spacing / hierarchy / empty-error-loading states / mobile table scroll / Providers consistency. No new product features.
+- **Next / hold:** Pause inventing new GFI/MVP work until Antonio (via CoS) picks the next AgentOS unit. Antonio-gated remain: demo verdict / launch post; live BYOK for cloud providers; Phase 2 real-daemon Ollama; custom domain.
 
 ## Phase 0 — Research + Foundation ✅ (in progress)
 
