@@ -283,6 +283,24 @@ test('event ingest rejects unknown agent', async () => {
   assert.equal(status, 400);
 });
 
+test('GET /api/events rejects non-numeric limit with 400', async () => {
+  const { status, json } = await api('GET', '/api/events?limit=abc');
+  assert.equal(status, 400);
+  assert.match(req(json.error, 'error'), /limit must be a number/i);
+});
+
+test('GET /api/events respects numeric limit and clamps oversized values', async () => {
+  const ten = await api('GET', '/api/events?limit=10');
+  assert.equal(ten.status, 200);
+  const tenEvents = req(ten.json.events, 'events') as TestEvent[];
+  assert.ok(tenEvents.length <= 10);
+
+  const huge = await api('GET', '/api/events?limit=99999');
+  assert.equal(huge.status, 200);
+  const hugeEvents = req(huge.json.events, 'events') as TestEvent[];
+  assert.ok(hugeEvents.length <= 500);
+});
+
 test('dashboard summary', async () => {
   const { status, json } = await api('GET', '/api/dashboard/summary');
   assert.equal(status, 200);

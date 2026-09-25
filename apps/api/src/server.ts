@@ -133,12 +133,20 @@ export function createApp(storage: Storage) {
         return send(res, 201, { events: inputs.length === 1 && !body.events ? events[0] : events });
       }
       if (path === '/api/events' && method === 'GET') {
-        const limit = url.searchParams.get('limit');
+        const limitRaw = url.searchParams.get('limit');
+        let limit: number | undefined;
+        if (limitRaw !== null && limitRaw !== '') {
+          const parsed = Number(limitRaw);
+          if (!Number.isFinite(parsed)) {
+            throw new ValidationError('limit must be a number');
+          }
+          limit = parsed;
+        }
         return send(res, 200, {
           events: storage.queryEvents({
             agent_id: url.searchParams.get('agent_id') ?? undefined,
             type: url.searchParams.get('type') ?? undefined,
-            limit: limit ? Number(limit) : undefined,
+            limit,
           }),
         });
       }
