@@ -1,12 +1,12 @@
 # STATUS — Shamar (living snapshot)
 
-_Last updated: 2026-09-25 ~16:36 EDT._
+_Last updated: 2026-09-25 ~16:58 EDT._
 
 ## Right now
 
-**Dashboard UI/UX polish unit IN PROGRESS → DONE (this PR).** Antonio-authorized standing UI track (via CoS). Focused clarity / spacing / hierarchy / empty-error-loading states / mobile table scroll / Providers section consistency — no new product features.
+**No open PRs.** PR #17 (dashboard UI/UX polish) squash-merged @ `479c1f1`. Dashboard UI polish **DONE on main**. Platform holding for Antonio (via CoS) next AgentOS unit — do not invent.
 
-**MVP Phases 0, 1, 3, 4, 5, 6 feature work DONE.** Phase 2 adapter implemented + mock-daemon verified; **real-daemon verification still pending** (Antonio's machine) — Phase 2 close-out remains open. GFI drafts 01–07 DONE via PRs #8–#14 (queue cleared). PR #15 merged @ `d5cb44b`. Latest clean main before this unit: `d53a605`.
+**MVP Phases 0, 1, 3, 4, 5, 6 feature work DONE.** Phase 2 adapter implemented + mock-daemon verified; **real-daemon verification still pending** (Antonio's machine) — Phase 2 close-out remains open. GFI drafts 01–07 DONE via PRs #8–#14 (queue cleared). PR #15 merged @ `d5cb44b`. Latest main: `479c1f1`.
 
 **GFI clearance (2026-09-25):**
 - PR #8 SDK lifecycle (GFI 07) @ c4e3c06
@@ -23,6 +23,7 @@ _Last updated: 2026-09-25 ~16:36 EDT._
 - **Phase 4 governance COMPLETE (2026-09-23 ~22:10)** — approvals, per-agent budgets, autonomy L0–L5, per-department budget pools.
 - **Phase 5 COMPLETE (2026-09-23 ~23:40)** — org view, lifecycle actions, delegation management UI.
 - **Phase 6 COMPLETE (2026-09-25)** — analytics summary + value/human-hours-saved.
+- **Dashboard UI/UX polish COMPLETE (2026-09-25)** — PR #17 squash-merged @ `479c1f1` (clarity, spacing, hierarchy, empty/error/loading states, mobile table scroll, Providers consistency).
 
 ## Recently done
 
@@ -31,21 +32,21 @@ _Last updated: 2026-09-25 ~16:36 EDT._
 
 **GFI 01–07 — ✅ COMPLETE 2026-09-25** — all seven draft good-first-issues shipped and merged (PRs #8–#14). Draft queue cleared.
 
+**Dashboard UI/UX polish — ✅ COMPLETE 2026-09-25** — PR #17 @ `479c1f1`.
+
 ## Next (queued)
 
-1. **Hold for merge** — this UI/UX polish PR (`feat/dashboard-ui-ux-polish`). Do not invent new GFI drafts or MVP phases until Antonio (via CoS) picks the next unit after merge.
+1. **Hold for Antonio** — do not invent new GFI drafts or MVP phases until Antonio (via CoS) picks the next AgentOS unit.
 2. **Launch post** — drafted (docs/launch-post-draft.md), **HELD until Antonio judges the demo attractive**. Nothing gets published before that.
 3. **Phase 2 close-out** — Ollama adapter verified against a mock daemon; needs one real-daemon run on Antonio’s machine.
 4. **Live BYOK** — Phase 3 adapters need live checks against Antonio’s real cloud keys (never committed; go in .env).
 
 ## Open PRs
 
-**This unit:** `feat/dashboard-ui-ux-polish` — dashboard UI/UX polish (clarity, states, mobile, Providers). Waiting on review/merge. Do not merge from agents unless CoS says so.
-
+**NONE.**
 
 ## Blockers / waiting on Antonio
 
-- **Merge of UI/UX polish PR** — waiting on review/merge of this unit; then CoS/Antonio picks the next AgentOS unit.
 - **Demo verdict / launch post** — his call on when the demo is attractive enough to post.
 - **Live BYOK for cloud providers** — real keys for OpenRouter / Anthropic / OpenAI / Gemini.
 - **Real-daemon Ollama verification** — ollama pull llama3.2, then one invoke via the API. Needs his machine; closes Phase 2.
@@ -65,4 +66,4 @@ cp .env.example .env && docker compose up   # api :4000, web :3000
 
 ## Health
 
-Tests / lint / typecheck / build — see this PR verification (UI-only `apps/web/index.html` + docs; no API/SDK test delta expected).
+Tests / lint / typecheck / build — green on main @ `479c1f1` (PR #17 UI polish). Docs-only sync this unit; no app-code delta.
