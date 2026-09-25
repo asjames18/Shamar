@@ -1,6 +1,26 @@
+
 # Autonomous Development Log
 
 Concise record of each work cycle: timestamp, task, changes, tests, risks, next task.
+
+## 2026-09-25 ~09:15 EDT — Phase 6 analytics first slice: GET /api/analytics/summary + dashboard (agent: justin/platform) — COMPLETE
+
+**Task selected:** Phase 6 first slice — cost + task metrics rolled up by agent/department/model/provider; mobile-first dashboard section; tests; docs. Value/hours-saved deferred.
+
+**What changed:**
+- `packages/types`: `AnalyticsSummary`, `AnalyticsTotals`, `AnalyticsBreakdownRow` (cost_usd known-only; task_success_rate; avg_duration_ms; error_events).
+- `apps/api/src/store.ts`: `analyticsSummary({ since, window })` via SQL aggregations on events JOIN agents; null `cost_usd` excluded from sums; empty groups omitted.
+- `apps/api/src/server.ts`: `GET /api/analytics/summary` — default all-time; `?window=24h|7d|30d|month` or `?since=<ISO>`; bad window → 400; auth required.
+- `apps/web/index.html`: Analytics section (window selector, totals cards, by-agent/dept/model/provider breakdown cards).
+- Tests: 3 new (empty window, known vs null costs, breakdowns + success/fail rates + window validation/auth) → **100/100**.
+- Docs: STATUS.md, ROADMAP.md, this log. AGENT_START unchanged.
+
+**Verification:** `npm run lint` · `npm run typecheck` · `npm test` · `npm run build` (reported in PR).
+
+**Security self-review:** no secrets; costs never fabricated; analytics behind existing API key; dashboard escapes labels via `esc()`.
+
+**Next:** Phase 6 remainder — value / human-hours-saved (explicit estimates only), or Antonio-blocked items (demo verdict, live BYOK, Phase 2 real-daemon).
+
 
 ## 2026-09-23 12:45–13:00 EDT — Phase 0: Research + Foundation (cycle 1)
 
@@ -71,7 +91,7 @@ Concise record of each work cycle: timestamp, task, changes, tests, risks, next 
 
 **Bug found by tests:** mock mirrored the real server's single-event unwrap (`{events: <bare event>}`, not an array) — SDK's `event()` initially returned undefined for it. Fixed to handle both shapes; verified against the real server E2E (register → heartbeat → started/model.called/task.completed → detail: 5 events, 1 task, 500 tok-in, all cost_usd null, newest-first timeline; summary: 1 agent, 5 events/24h).
 
-**Tests run:** `npm run lint` ✅ · `npm run typecheck` ✅ · `npm test` — **31/31 pass** ✅ (17 existing + 14 new).
+**Tests run:** `npm run lint` ✅ · `npm run typecheck` ✅ · `npm test` — **31/31 pass** ✅ (17 existing + 13 new).
 **Security self-review:** no secrets touched (API key from env/ctor, never logged or echoed); no prompt/response bodies handled; cost stays null/omitted; `encodeURIComponent` on path ids.
 
 **Next logical task (Phase 1):** seed demo-data script (`scripts/seed-demo.js` using the SDK), then Phase 2 Ollama adapter.
@@ -226,7 +246,7 @@ Scope: ~/workspace/shamar-site/demo.html + landing.html — simulated live event
 
 **Changes (`demo.html`):**
 - **Timestamps anchored to page load** (`const T0 = Date.now()`; `at(msAgo)`) — the fleet always looks fresh; no more fixed 2026-09-23 timestamps going stale.
-- **Richer seed: 6 agents, varied statuses** — Research Agent + Content Crafter + HR Onboarder (active), Deploy Watchdog (error — 3 task failures in its timeline), Inbox Triage (paused), Data Sync (idle). Each with full identity fields, usage rollups, and a 4–6 event activity timeline. Fleet feed seeded with 14 newest-first events.
+- **Richer seed: 6 agents, varied statuses** — Research Agent + Content Crafter + HR Onboarder (active), Deploy Watchdog (error — 3 task failures in its timeline), Inbox Triage (paused), Data Sync (idle). Each with full identity fields, usage rollups, and a 4–6 event activity timeline. Fleet feed seeded with 13 newest-first events.
 - **Simulated live event stream** — every 12–20s a weighted random sample event (task.completed/started, model.called, tool.called, heartbeat, occasional task.failed from the error-state agent) prepends to the fleet feed, the agent's timeline, and usage counters. No paid models, no backend — pure browser-side simulation.
 - **Visual polish** — pulsing "live simulation" badge in header, fade-in animation on fresh event rows, row hover, "Needs attention" summary card (replaces "Failed agents"), ⚠ attention banner on the error agent's detail page explaining what a real Shamar deployment would do (page owner, pin to top of dashboard), per-view stream status line.
 - **Disclosure** — header keeps "sample data, not a live backend"; new dashed footer note spells out that every agent/event/timestamp/metric is browser-generated sample data and the live stream is a scripted simulation.
@@ -529,7 +549,7 @@ Scope: Phase 4 governance, final slice — shared monthly budget caps per depart
 - `apps/api/src/store.ts` — `department_budgets` table; `setDepartmentBudget` (reset alert months on re-set), `departmentBudgetState`, `listDepartments`, `checkDepartmentBudget` (edge-triggered, emits `department.budget.*` on the triggering agent); `model.called` hook now also checks the agent's department pool; detail payload gains `department_budget`.
 - `apps/api/src/server.ts` — department budget gate after the per-agent gate (403 + `policy.blocked` + `checkDepartmentBudget` to keep the alert on the trail); routes `GET /api/departments`, `GET|PUT /api/departments/:name/budget`.
 - `apps/web/index.html` — "Department budgets" list-view section: per-department cards with pool meters + inline set/clear, plus a set-budget-for-any-name form; shared `budgetMeterHtml` renderer (refactored the agent budget card onto it); agent detail shows the department pool meter. Mobile-first cards, honest validation errors, truthful statuses (UI/UX track).
-- Tests: 4 new (set → state → clear; validation fails closed; shared-pool math + edge-triggered alerts on the triggering agent + no personal-alert contamination; invoke 403 `department_budget_exceeded` / 502 passthrough) — **90/90 pass**.
+- Tests: 3 new (set → state → clear; validation fails closed; shared-pool math + edge-triggered alerts on the triggering agent + no personal-alert contamination; invoke 403 `department_budget_exceeded` / 502 passthrough) — **90/90 pass**.
 
 **Verification:** `npm run lint` ✅ zero warnings · `npm run typecheck` ✅ · `npm test` ✅ 90/90 · `npm run build` ✅. E2E against a live API: cap set → spend 0.45/0.50 → warning (90%) on triggering agent → spend 0.55 → exceeded → invoke 403 `department_budget_exceeded`, `policy.blocked` + `department.budget.exceeded` on the trail, department list + detail pool meter correct.
 

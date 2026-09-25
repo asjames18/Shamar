@@ -390,6 +390,44 @@ export function createApp(storage: Storage) {
         }
       }
 
+
+      // --- analytics (Phase 6 first slice) --------------------------------
+      // Cost + task metrics by agent/department/model/provider.
+      // Default window: all-time. Optional ?since=<ISO> or ?window=24h|7d|30d|month.
+      // cost_usd sums only known/non-null values; value/hours-saved deferred.
+      if (path === '/api/analytics/summary' && method === 'GET') {
+        const windowParam = url.searchParams.get('window');
+        const sinceParam = url.searchParams.get('since');
+        const allowed = new Set(['24h', '7d', '30d', 'month']);
+        let since: string | null = null;
+        let windowLabel: 'all' | '24h' | '7d' | '30d' | 'month' | 'custom' = 'all';
+        if (windowParam) {
+          if (!allowed.has(windowParam)) {
+            throw new ValidationError('window must be one of: 24h, 7d, 30d, month');
+          }
+          windowLabel = windowParam as '24h' | '7d' | '30d' | 'month';
+          const ms =
+            windowParam === '24h' ? 24 * 3600 * 1000
+            : windowParam === '7d' ? 7 * 24 * 3600 * 1000
+            : windowParam === '30d' ? 30 * 24 * 3600 * 1000
+            : null;
+          if (windowParam === 'month') {
+            const d = new Date();
+            d.setUTCDate(1);
+            d.setUTCHours(0, 0, 0, 0);
+            since = d.toISOString();
+          } else {
+            since = new Date(Date.now() - (ms as number)).toISOString();
+          }
+        } else if (sinceParam) {
+          const t = Date.parse(sinceParam);
+          if (!Number.isFinite(t)) throw new ValidationError('since must be a valid ISO timestamp');
+          since = new Date(t).toISOString();
+          windowLabel = 'custom';
+        }
+        return send(res, 200, storage.analyticsSummary({ since, window: windowLabel }));
+      }
+
       // --- dashboard ----------------------------------------------------
       if (path === '/api/dashboard/summary' && method === 'GET') {
         return send(res, 200, storage.dashboardSummary());
