@@ -31,12 +31,23 @@ import type {
   AnalyticsSummary,
   AnalyticsBreakdownRow,
   AnalyticsTotals,
+  AnalyticsValue,
   DashboardSummary,
   EventActor,
   Provider,
   ProviderInput,
 } from '@control-plane/types';
 import { KNOWN_EVENT_TYPES } from '@control-plane/types';
+
+/**
+ * Max `human_minutes_saved` accepted on a single event (ADR-0008).
+ * 100 years of continuous wall-clock minutes: 100 * 365 * 24 * 60 = 52_560_000.
+ * A single-task claim above a century of continuous human time is not credible;
+ * the cap also keeps values well inside Number.MAX_SAFE_INTEGER so SQLite
+ * integers cannot RangeError when node:sqlite marshals analytics aggregates.
+ */
+export const MAX_HUMAN_MINUTES_SAVED_PER_EVENT = 100 * 365 * 24 * 60; // 52_560_000
+
 
 export interface Storage {
   // agents
@@ -161,7 +172,7 @@ export interface Storage {
   /**
    * Cost + task metrics rolled up by agent, department, model, and provider.
    * Sums cost_usd only from known/non-null values (ADR-0003). Optional since
-   * ISO lower bound; null/omit = all-time. Value/hours-saved deferred.
+   * ISO lower bound; null/omit = all-time. Value block: explicit human_minutes_saved only (ADR-0008).
    */
   analyticsSummary(opts?: { since?: string | null; window?: AnalyticsSummary['window'] }): AnalyticsSummary;
   // dashboard
@@ -892,6 +903,25 @@ export class SqliteStorage implements Storage {
     if (input.cost_usd != null && (!Number.isFinite(input.cost_usd) || input.cost_usd < 0)) {
       throw new ValidationError('cost_usd must be a finite, non-negative number or null');
     }
+    // ADR-0008: optional self-reported human_minutes_saved on event data.
+    // Finite non-negative and <= MAX_HUMAN_MINUTES_SAVED_PER_EVENT when present;
+    // invalid / oversized values rejected (same honesty as cost_usd). Cap keeps
+    // SQLite integers inside the JS safe range so analytics aggregation cannot RangeError.
+    if (input.data != null && Object.prototype.hasOwnProperty.call(input.data, 'human_minutes_saved')) {
+      const mins = input.data['human_minutes_saved'];
+      if (mins !== null && mins !== undefined) {
+        if (
+          typeof mins !== 'number' ||
+          !Number.isFinite(mins) ||
+          mins < 0 ||
+          mins > MAX_HUMAN_MINUTES_SAVED_PER_EVENT
+        ) {
+          throw new ValidationError(
+            `human_minutes_saved must be a finite, non-negative number <= ${MAX_HUMAN_MINUTES_SAVED_PER_EVENT} (max minutes / event; ADR-0008), or null`,
+          );
+        }
+      }
+    }
     const id = randomUUID();
     // Store UTC Z so since/window filters stay chronological even when clients
     // send offset ISOs. analyticsSummary also uses datetime() for defense-in-depth.
@@ -1144,6 +1174,20 @@ export class SqliteStorage implements Storage {
            COALESCE(SUM(CASE WHEN e.duration_ms IS NOT NULL THEN e.duration_ms ELSE 0 END), 0) AS duration_sum,
            COALESCE(SUM(CASE WHEN e.duration_ms IS NOT NULL THEN 1 ELSE 0 END), 0) AS events_with_duration,
            COALESCE(SUM(CASE WHEN e.type IN ('task.failed', 'tool.failed') THEN 1 ELSE 0 END), 0) AS error_events,
+           COALESCE(SUM(CASE
+             WHEN e.type = 'task.completed'
+              AND json_extract(e.data, '$.human_minutes_saved') IS NOT NULL
+              AND typeof(json_extract(e.data, '$.human_minutes_saved')) IN ('integer', 'real')
+              AND json_extract(e.data, '$.human_minutes_saved') >= 0
+              AND json_extract(e.data, '$.human_minutes_saved') <= ${MAX_HUMAN_MINUTES_SAVED_PER_EVENT}
+             THEN CAST(json_extract(e.data, '$.human_minutes_saved') AS REAL) ELSE 0 END), 0) AS minutes_saved_sum,
+           COALESCE(SUM(CASE
+             WHEN e.type = 'task.completed'
+              AND json_extract(e.data, '$.human_minutes_saved') IS NOT NULL
+              AND typeof(json_extract(e.data, '$.human_minutes_saved')) IN ('integer', 'real')
+              AND json_extract(e.data, '$.human_minutes_saved') >= 0
+              AND json_extract(e.data, '$.human_minutes_saved') <= ${MAX_HUMAN_MINUTES_SAVED_PER_EVENT}
+             THEN 1 ELSE 0 END), 0) AS events_with_hours_estimate,
            COUNT(*) AS total_events
          FROM events e
          WHERE 1=1 ${sinceClause}`,
@@ -1160,6 +1204,14 @@ export class SqliteStorage implements Storage {
       events_with_duration: Number(totalsRow.events_with_duration),
       error_events: Number(totalsRow.error_events),
       total_events: Number(totalsRow.total_events),
+    };
+    const eventsWithHours = Number(totalsRow.events_with_hours_estimate);
+    const minutesSum = Number(totalsRow.minutes_saved_sum);
+    const value: AnalyticsValue = {
+      tasks_completed: Number(totalsRow.tasks_completed),
+      human_hours_saved: eventsWithHours === 0 ? null : minutesSum / 60,
+      events_with_hours_estimate: eventsWithHours,
+      estimated: true,
     };
 
     const mapRows = (
@@ -1239,6 +1291,7 @@ export class SqliteStorage implements Storage {
       since,
       window: windowLabel,
       totals,
+      value,
       by_agent: mapRows(byAgent, (r) => r.agent_id as string, (r) => r.agent_name as string),
       by_department: mapRows(byDepartment, (r) => r.dept as string, (r) => r.dept as string),
       by_model: mapRows(byModel, (r) => r.model as string, (r) => r.model as string),

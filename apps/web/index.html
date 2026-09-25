@@ -106,7 +106,7 @@
     <div class="card" id="org-delegation" style="margin-bottom:26px"></div>
 
     <h2>Analytics</h2>
-    <p class="hint" style="margin-top:0;margin-bottom:12px">Cost and task metrics for the selected window. Costs sum only known reported values — unknown costs stay out of totals. Value / hours-saved metrics are deferred.</p>
+    <p class="hint" style="margin-top:0;margin-bottom:12px">Cost and task metrics for the selected window. Costs sum only known reported values — unknown costs stay out of totals. Human hours saved sum only explicit estimates (self-reported); unknown stays — (never invent ROI dollars).</p>
     <div class="form-actions" style="flex-wrap:wrap;margin-bottom:12px">
       <label for="analytics-window" class="l" style="margin:0;align-self:center">Window</label>
       <select id="analytics-window" aria-label="Analytics window" style="background:var(--bg);border:1px solid var(--line);color:var(--txt);padding:8px 10px;border-radius:8px">
@@ -341,16 +341,23 @@ async function refreshList() {
       ? `<div style="font-size:13px">` + org.owners.map(o => `<span class="pill" style="margin:0 6px 6px 0" title="${o.agent_ids.length} agent${o.agent_ids.length === 1 ? '' : 's'}">${esc(o.owner)} · ${o.agent_ids.length}</span>`).join('') + '</div>'
       : '<p class="hint" style="margin:0">No owners set — open an agent\'s detail page and use the Delegation section to set a human owner.</p>');
 
-  // Analytics (Phase 6 first slice): totals + breakdowns by agent/dept/model/provider.
+  // Analytics (Phase 6): totals + breakdowns by agent/dept/model/provider.
   const at = analytics.totals || {};
   const fmtPct = (r) => r == null ? '—' : (Math.round(r * 1000) / 10) + '%';
   // ADR-0003 / AGENTS.md: unknown cost stays unknown — never render $0.00 when
   // there are no cost observations. Known zero (events_with_cost > 0, sum 0) may show $0.00.
   const money = (n, eventsWithCost) =>
     (!eventsWithCost ? '—' : ('$' + Number(n || 0).toFixed(2)));
+  // ADR-0008: unknown hours stay unknown — never render 0.0 when there are no estimates.
+  // Known zero (events_with_hours_estimate > 0, sum 0) may show 0.0h.
+  const hours = (n, eventsWithHours) =>
+    (!eventsWithHours ? '—' : (Number(n || 0).toFixed(1) + 'h'));
+  const av = analytics.value || {};
   document.getElementById('analytics-cards').innerHTML = [
     [money(at.cost_usd, at.events_with_cost), 'Known cost'],
     [at.tasks_completed || 0, 'Tasks completed'],
+    [hours(av.human_hours_saved, av.events_with_hours_estimate), 'Human hours saved'],
+    [av.events_with_hours_estimate || 0, 'Hours estimates'],
     [at.tasks_failed || 0, 'Tasks failed'],
     [fmtPct(at.task_success_rate), 'Success rate'],
     [at.avg_duration_ms == null ? '—' : fmtDur(Math.round(at.avg_duration_ms)), 'Avg duration'],

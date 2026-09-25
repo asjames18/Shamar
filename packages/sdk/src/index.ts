@@ -55,6 +55,12 @@ export interface TaskEventOptions {
   data?: Record<string, unknown>;
   /** Wall-clock duration of the completed task. */
   durationMs?: number;
+  /**
+   * Explicit estimate of human minutes this task saved (ADR-0008).
+   * Finite non-negative when set; omitted/undefined means unknown.
+   * Never invent a default — unknown stays out of analytics totals.
+   */
+  humanMinutesSaved?: number;
 }
 
 /** Convenience payload for model/tool call events. */
@@ -197,11 +203,17 @@ export class ShamarClient {
     agentId: string,
     options: TaskEventOptions,
   ): Promise<AgentEvent> {
+    const data = {
+      ...(options.data ?? {}),
+      ...(options.humanMinutesSaved != null
+        ? { human_minutes_saved: options.humanMinutesSaved }
+        : {}),
+    };
     return this.event({
       agent_id: agentId,
       type: 'task.completed',
       summary: `Task completed: ${options.title}`,
-      data: options.data,
+      data: Object.keys(data).length ? data : options.data,
       duration_ms: options.durationMs,
     });
   }
