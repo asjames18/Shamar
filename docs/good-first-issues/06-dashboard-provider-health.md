@@ -1,3 +1,5 @@
+**Status:** done (implemented in `feat/dashboard-provider-health`) — Providers section on `apps/web/index.html` with status badges + Validate (POST /api/providers/:id/validate); display + validate only.
+
 # Draft issue — Dashboard: provider list with health status
 
 **Suggested labels:** `good-first-issue`, `enhancement`
@@ -15,21 +17,21 @@ to confirm it's healthy; the dashboard should show that.
 
 ## Acceptance criteria
 
-- [ ] Dashboard gains a "Providers" section (below the agents list or as a
+- [x] Dashboard gains a "Providers" section (below the agents list or as a
       tab — pick the smaller change) showing: name, kind, status badge
       (healthy / unhealthy / unknown), and last health-check time.
-- [ ] Each provider row has a "Validate" button that calls
+- [x] Each provider row has a "Validate" button that calls
       `POST /api/providers/:id/validate` and refreshes the badge in place;
       failures surface the API's error message (e.g. "Ollama not reachable
       at …") instead of a silent no-op.
-- [ ] New providers still get created via the API/seed script — this issue is
+- [x] New providers still get created via the API/seed script — this issue is
       display + validate only, not a provider registration form (separate
       issue if wanted).
-- [ ] Follows the existing dashboard patterns: `fetch()` helpers with the
+- [x] Follows the existing dashboard patterns: `fetch()` helpers with the
       `x-api-key` header, the `esc()` HTML-escaping helper on all rendered
       provider fields (provider names/URLs are user input), 5s auto-refresh
       keeps working.
-- [ ] `node --check` on the page's JS (or equivalent extraction) passes;
+- [x] `node --check` on the page's JS (or equivalent extraction) passes;
       `npm run lint`, `npm run typecheck`, `npm test`, `npm run build` pass;
       manual screenshot/GIF of the new section in the PR.
 

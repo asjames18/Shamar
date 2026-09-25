@@ -28,6 +28,13 @@
   .pill.paused { color:var(--warn); border-color:var(--warn); }
   .pill.error { color:var(--err); border-color:var(--err); }
   .pill.idle,.pill.retired { color:var(--dim); }
+  .pill.healthy { color:var(--ok); border-color:var(--ok); }
+  .pill.unhealthy { color:var(--err); border-color:var(--err); }
+  .pill.unknown { color:var(--dim); }
+  .btn.sm { padding:5px 12px; font-size:12px; }
+  #providers-msg { color:var(--dim); font-size:13px; margin:8px 0 0; min-height:18px; }
+  #providers-msg.err { color:var(--err); }
+  #providers-msg.ok { color:var(--ok); }
   .autonomy-badge { display:inline-block; padding:2px 10px; border-radius:999px; font-size:12px; border:1px solid var(--accent); color:var(--accent); cursor:help; }
   #err { color:var(--err); margin:12px 0; min-height:20px; }
   code { background:#0a0f1c; padding:2px 6px; border-radius:6px; font-size:13px; }
@@ -89,6 +96,14 @@
       <thead><tr><th>Name</th><th>Department</th><th>Model</th><th>Status</th><th>Last heartbeat</th></tr></thead>
       <tbody id="agents"><tr><td colspan="5">—</td></tr></tbody>
     </table>
+
+    <h2>Providers</h2>
+    <p class="hint" style="margin-top:0;margin-bottom:12px">Registered model providers and their last health check. Use <strong>Validate</strong> to ping reachability (e.g. confirm Ollama is up). New providers are created via the API or <code>scripts/seed-demo.js</code> — not from this page.</p>
+    <table>
+      <thead><tr><th>Name</th><th>Kind</th><th>Status</th><th>Last health check</th><th></th></tr></thead>
+      <tbody id="providers"><tr><td colspan="5">—</td></tr></tbody>
+    </table>
+    <div id="providers-msg"></div>
 
     <h2>Department budgets</h2>
     <div class="card" style="margin-bottom:14px">
@@ -264,14 +279,45 @@ form.addEventListener('submit', async (e) => {
   }
 });
 
+async function validateProvider(id) {
+  const msg = document.getElementById('providers-msg');
+  msg.className = '';
+  msg.textContent = 'Validating…';
+  const row = document.querySelector(`tr[data-provider-id="${CSS.escape(id)}"]`);
+  const btn = row ? row.querySelector('[data-validate-provider]') : null;
+  if (btn) btn.disabled = true;
+  try {
+    document.getElementById('err').textContent = '';
+    // POST returns 200 with { ok, message, status } even when unhealthy — surface message either way.
+    const result = await post(`/api/providers/${encodeURIComponent(id)}/validate`, {});
+    const st = (result.status === 'healthy' || result.status === 'unhealthy')
+      ? result.status
+      : (result.ok ? 'healthy' : 'unhealthy');
+    if (row) {
+      const badge = row.querySelector('[data-provider-status]');
+      if (badge) { badge.className = 'pill ' + st; badge.textContent = st; }
+      const checked = row.querySelector('[data-provider-checked]');
+      if (checked) checked.textContent = 'just now';
+    }
+    msg.className = result.ok ? 'ok' : 'err';
+    msg.textContent = result.message || (result.ok ? 'Provider healthy.' : 'Provider unhealthy.');
+  } catch (e) {
+    msg.className = 'err';
+    msg.textContent = e.message;
+    document.getElementById('err').textContent = e.message;
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
 async function refreshList() {
   const winEl = document.getElementById('analytics-window');
   const win = winEl ? winEl.value : 'all';
   const analyticsPath = win && win !== 'all' ? '/api/analytics/summary?window=' + encodeURIComponent(win) : '/api/analytics/summary';
-  const [sum, agents, pending, depts, orgv, analytics] = await Promise.all([
+  const [sum, agents, pending, depts, orgv, analytics, providers] = await Promise.all([
     get('/api/dashboard/summary'), get('/api/agents'),
     get('/api/approvals?status=pending'), get('/api/departments'),
-    get('/api/org'), get(analyticsPath),
+    get('/api/org'), get(analyticsPath), get('/api/providers'),
   ]);
   document.getElementById('cards').innerHTML = [
     [sum.total_agents, 'Total agents'], [sum.active_agents, 'Active'],
@@ -286,6 +332,21 @@ async function refreshList() {
     <td>${esc(a.department)}</td><td>${esc(a.model || '—')}</td>
     <td><span class="pill ${esc(a.status)}">${esc(a.status)}</span></td>
     <td>${ago(a.last_heartbeat_at)}</td></tr>`).join('') || '<tr><td colspan="5">No agents yet.</td></tr>';
+
+  // Providers (GFI 06): list + Validate. Never-validated / missing status — "unknown", not failure.
+  const providerStatus = (s) => (s === 'healthy' || s === 'unhealthy') ? s : 'unknown';
+  document.getElementById('providers').innerHTML = (providers.providers || []).map(p => {
+    const st = providerStatus(p.status);
+    return `<tr data-provider-id="${esc(p.id)}">
+      <td><strong>${esc(p.name)}</strong>${p.base_url ? `<br><span style="color:var(--dim);font-size:12px">${esc(p.base_url)}</span>` : ''}</td>
+      <td><code>${esc(p.kind)}</code></td>
+      <td><span class="pill ${esc(st)}" data-provider-status>${esc(st)}</span></td>
+      <td data-provider-checked>${p.last_health_check ? ago(p.last_health_check) : '—'}</td>
+      <td><button class="btn ghost sm" data-validate-provider="${esc(p.id)}">Validate</button></td>
+    </tr>`;
+  }).join('') || '<tr><td colspan="5">No providers yet — run <code>node scripts/seed-demo.js</code> or <code>POST /api/providers</code>.</td></tr>';
+  document.querySelectorAll('[data-validate-provider]').forEach(btn =>
+    btn.addEventListener('click', () => validateProvider(btn.getAttribute('data-validate-provider'))));
 
   document.getElementById('events').innerHTML = sum.recent_events.map(e => `
     <tr><td>${ago(e.occurred_at)}</td><td><code>${esc(e.type)}</code></td>

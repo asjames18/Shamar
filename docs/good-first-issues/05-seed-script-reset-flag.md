@@ -1,4 +1,4 @@
-**Status:** done (implemented in `feat/seed-script-reset-flag`) — `--reset` / `--reset=true` deletes only exact known seeded demo agents, then seeds fresh; demo provider row retained (no DELETE /api/providers/:id).
+**Status:** done (PR #13 / `feat/seed-script-reset-flag`) — `--reset` / `--reset=true` deletes only exact known seeded demo agents, then seeds fresh; demo provider row retained (no DELETE /api/providers/:id).
 
 # Draft issue — `--reset` flag for the demo seed script
 

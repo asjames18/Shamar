@@ -3,6 +3,20 @@
 Concise record of each work cycle: timestamp, task, changes, tests, risks, next task.
 
 
+## 2026-09-25 ~12:45 EDT — web: Providers section with health + Validate (GFI 06) (agent: justin/platform) — COMPLETE
+
+**Task selected:** Good-first-issue draft 06 — dashboard Providers section (below agents list) showing name/kind/status badge/last health-check; Validate button calls `POST /api/providers/:id/validate` and refreshes badge in place; surface API error messages; display + validate only (no registration form). GFI drafts 01—06 complete after this.
+
+**What changed:**
+- `apps/web/index.html`: Providers table + status pills (healthy / unhealthy / unknown); `validateProvider()` via existing `post()` + `x-api-key`; `esc()` on all rendered provider fields; wired into `refreshList()` / 5s auto-refresh; visual style matches existing page.
+- Docs: good-first-issues README + 06 marked done; 05 → PR #13; STATUS (PR #13 merged, this unit); this log.
+
+**Verification:** `npm run lint` · `npm run typecheck` · `npm test` · `npm run build`; `node --check` on extracted page JS; manual: API + static web, seed providers, screenshot of Providers section.
+
+**Security self-review:** no secrets; `esc()` on provider name/kind/url/status (user input); no registration form / credential fields; no deploy.
+
+**Next:** Antonio-blocked items (demo verdict, live BYOK, Phase 2 real-daemon), or next queued work from CoS.
+
 ## 2026-09-25 ~12:35 EDT — scripts: seed-demo --reset flag (GFI 05) (agent: justin/platform) — COMPLETE
 
 **Task selected:** Good-first-issue draft 05 — add `--reset` / `--reset=true` to `scripts/seed-demo.js` so contributors can wipe only known seeded demo agents (exact name constants) and reseed without deleting the SQLite file / user-created entities.
