@@ -158,6 +158,12 @@ interface ApiJson {
   by_department?: Array<{ key: string; label: string; cost_usd: number; tasks_completed: number; tasks_failed: number; task_success_rate: number | null }>;
   by_model?: Array<{ key: string; cost_usd: number; tasks_completed: number; tasks_failed: number }>;
   by_provider?: Array<{ key: string; cost_usd: number; tasks_completed: number; tasks_failed: number }>;
+  value?: {
+    tasks_completed: number;
+    human_hours_saved: number | null;
+    events_with_hours_estimate: number;
+    estimated: true;
+  };
 }
 
 function req<T>(v: T | undefined | null, what: string): T {
@@ -1221,6 +1227,11 @@ test('analytics: empty data returns zero totals', async () => {
   assert.deepEqual(json.by_department, []);
   assert.deepEqual(json.by_model, []);
   assert.deepEqual(json.by_provider, []);
+  const value = req(json.value, 'value');
+  assert.equal(value.tasks_completed, 0);
+  assert.equal(value.human_hours_saved, null); // unknown — never 0.0
+  assert.equal(value.events_with_hours_estimate, 0);
+  assert.equal(value.estimated, true);
 });
 
 test('analytics: known costs summed; null costs excluded from totals', async () => {
@@ -1362,6 +1373,112 @@ test('analytics: ingest normalizes offset ISO occurred_at to UTC Z', async () =>
   assert.match(req(bad.json.error, 'error'), /occurred_at/);
 });
 
+
+
+test('analytics value: no estimates leaves hours nullable', async () => {
+  const a = await api('POST', '/api/agents', {
+    name: 'Value No Estimate Agent',
+    department: 'Ops',
+    provider: 'ollama',
+    model: 'llama3.2',
+  });
+  assert.equal(a.status, 201);
+  const id = req(a.json.agent, 'agent').id;
+  // Completed tasks without human_minutes_saved — hours stay unknown
+  let r = await api('POST', '/api/events', {
+    agent_id: id, type: 'task.completed', summary: 'done A', duration_ms: 100,
+  });
+  assert.equal(r.status, 201);
+  r = await api('POST', '/api/events', {
+    agent_id: id, type: 'task.completed', summary: 'done B', data: { human_minutes_saved: null },
+  });
+  assert.equal(r.status, 201);
+  // Shape check: value block always present; hours stay null until an estimate exists.
+  // (Shared DB may already have estimates from later tests only if order flips — sibling
+  // tests cover sum + reject; empty-window test covers null-when-zero-observations.)
+  const { status, json } = await api('GET', '/api/analytics/summary');
+  assert.equal(status, 200);
+  const value = req(json.value, 'value');
+  assert.ok(value.tasks_completed >= 2);
+  assert.equal(typeof value.events_with_hours_estimate, 'number');
+  assert.equal(value.estimated, true);
+  assert.ok(
+    value.human_hours_saved === null || typeof value.human_hours_saved === 'number',
+    'human_hours_saved must be null (unknown) or a number',
+  );
+});
+
+test('analytics value: explicit estimates sum; nulls excluded; negatives rejected', async () => {
+  const a = await api('POST', '/api/agents', {
+    name: 'Value Hours Agent',
+    department: 'Ops',
+    provider: 'ollama',
+    model: 'llama3.2',
+  });
+  assert.equal(a.status, 201);
+  const id = req(a.json.agent, 'agent').id;
+
+  // 30 + 90 minutes = 2.0 hours; one without estimate; one null
+  let r = await api('POST', '/api/events', {
+    agent_id: id, type: 'task.completed', summary: 'save 30',
+    data: { human_minutes_saved: 30 },
+  });
+  assert.equal(r.status, 201);
+  r = await api('POST', '/api/events', {
+    agent_id: id, type: 'task.completed', summary: 'save 90',
+    data: { human_minutes_saved: 90 },
+  });
+  assert.equal(r.status, 201);
+  r = await api('POST', '/api/events', {
+    agent_id: id, type: 'task.completed', summary: 'no estimate',
+  });
+  assert.equal(r.status, 201);
+  r = await api('POST', '/api/events', {
+    agent_id: id, type: 'task.completed', summary: 'null estimate',
+    data: { human_minutes_saved: null },
+  });
+  assert.equal(r.status, 201);
+
+  // Negative rejected over HTTP
+  r = await api('POST', '/api/events', {
+    agent_id: id, type: 'task.completed', summary: 'bad',
+    data: { human_minutes_saved: -5 },
+  });
+  assert.equal(r.status, 400);
+  assert.match(req(r.json.error, 'error'), /human_minutes_saved/);
+
+  // Wrong type rejected over HTTP
+  r = await api('POST', '/api/events', {
+    agent_id: id, type: 'task.completed', summary: 'str',
+    data: { human_minutes_saved: '30' },
+  });
+  assert.equal(r.status, 400);
+  assert.match(req(r.json.error, 'error'), /human_minutes_saved/);
+
+  // NaN/Infinity cannot survive JSON — exercise the store directly (same pattern as cost_usd).
+  for (const bad of [Number.NaN, Number.POSITIVE_INFINITY, -1]) {
+    assert.throws(
+      () =>
+        storage.appendEvent({
+          agent_id: id,
+          type: 'task.completed',
+          summary: 'bad minutes',
+          data: { human_minutes_saved: bad },
+        }),
+      (err: unknown) => err instanceof ValidationError && /human_minutes_saved/.test((err as Error).message),
+    );
+  }
+
+  const { status, json } = await api('GET', '/api/analytics/summary');
+  assert.equal(status, 200);
+  const value = req(json.value, 'value');
+  assert.equal(value.estimated, true);
+  assert.ok(value.events_with_hours_estimate >= 2);
+  assert.ok(value.human_hours_saved != null, 'expected hours when estimates present');
+  // At least our 2.0h from this agent (other tests may add more)
+  assert.ok((value.human_hours_saved as number) >= 2 - 1e-9, `expected >= 2h, got ${value.human_hours_saved}`);
+  assert.ok(value.tasks_completed >= 4);
+});
 test('analytics: chronological since includes offset ISO that lex would drop', () => {
   // Plant a raw/legacy offset row that bypasses ingest normalize. Lexicographic
   // TEXT compare wrongly excludes it from a 12:00Z since window; datetime() must not.

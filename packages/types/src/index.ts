@@ -318,9 +318,32 @@ export interface AnalyticsTotals {
 }
 
 /**
- * GET /api/analytics/summary payload (Phase 6 first slice).
+ * Value / human-hours-saved rollup (Phase 6, ADR-0008).
+ * Only explicit client-reported `human_minutes_saved` on `task.completed`
+ * events contribute. Never invent defaults; never convert hours to dollar ROI.
+ */
+export interface AnalyticsValue {
+  /** Count of `task.completed` events in the window (same as totals.tasks_completed). */
+  tasks_completed: number;
+  /**
+   * Sum of explicit `human_minutes_saved` / 60 across observations.
+   * Null when `events_with_hours_estimate` is 0 — unknown stays unknown
+   * (never show 0.0 as a measured total).
+   */
+  human_hours_saved: number | null;
+  /** Number of `task.completed` events that carried an explicit minutes estimate. */
+  events_with_hours_estimate: number;
+  /**
+   * Always true: values are self-reported estimates, not measured wall-clock
+   * savings. Mirrors cost honesty (ADR-0005 / ADR-0008).
+   */
+  estimated: true;
+}
+
+/**
+ * GET /api/analytics/summary payload (Phase 6).
  * Cost + task metrics rolled up by agent, department, model, and provider.
- * Value/hours-saved metrics are deferred — not present here.
+ * `value` carries explicit human-hours-saved estimates only (ADR-0008).
  *
  * Default window is all-time (since=null). Pass `since` (ISO timestamp) or
  * `window` (24h|7d|30d|month) to narrow.
@@ -331,6 +354,8 @@ export interface AnalyticsSummary {
   /** Documented window label: 'all' | '24h' | '7d' | '30d' | 'month' | 'custom'. */
   window: 'all' | '24h' | '7d' | '30d' | 'month' | 'custom';
   totals: AnalyticsTotals;
+  /** Explicit value estimates only — see AnalyticsValue / ADR-0008. */
+  value: AnalyticsValue;
   by_agent: AnalyticsBreakdownRow[];
   by_department: AnalyticsBreakdownRow[];
   by_model: AnalyticsBreakdownRow[];

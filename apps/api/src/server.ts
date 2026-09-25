@@ -394,7 +394,7 @@ export function createApp(storage: Storage) {
       // --- analytics (Phase 6 first slice) --------------------------------
       // Cost + task metrics by agent/department/model/provider.
       // Default window: all-time. Optional ?since=<ISO> or ?window=24h|7d|30d|month.
-      // cost_usd sums only known/non-null values; value/hours-saved deferred.
+      // cost_usd sums only known/non-null values; value.human_hours_saved from explicit estimates only (ADR-0008).
       if (path === '/api/analytics/summary' && method === 'GET') {
         const windowParam = url.searchParams.get('window');
         const sinceParam = url.searchParams.get('since');
