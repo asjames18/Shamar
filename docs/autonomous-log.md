@@ -3,6 +3,21 @@
 Concise record of each work cycle: timestamp, task, changes, tests, risks, next task.
 
 
+## 2026-09-25 ~12:25 EDT — examples: Python register-and-report client (GFI 04) (agent: justin/platform) — COMPLETE
+
+**Task selected:** Good-first-issue draft 04 — port `examples/register-and-report.js` to stdlib-only Python (`urllib`/`json`/`os`/`sys`); new `examples/README.md`; docs catch-up (PR #11 GFI 03 merged).
+
+**What changed:**
+- `examples/register-and-report.py`: register/reuse Research Agent, heartbeat, same three events (single + batch), print agent id + dashboard detail link; CLI base from argv[1] or `SHAMAR_BASE_URL`/`API_BASE_URL`; key from argv[2] or `SHAMAR_API_KEY`/`AGENTOS_DEV_API_KEY`.
+- `examples/README.md`: both clients, prerequisites, one-liners.
+- Docs: good-first-issues README + 04 marked done; 03 → PR #11; STATUS (PR #11 merged, this unit); this log.
+
+**Verification:** `npm run lint` — `npm run typecheck` — `npm test` (115/115) — `npm run build`; `python -m py_compile examples/register-and-report.py` OK; manual E2E: `npm run dev:api` + `python examples/register-and-report.py` with `.env.example` key → registered agent `8208edd0-674d-4f42-bb70-ede1824fb228`; GET `/api/events?agent_id=…` showed agent.started / model.called / task.completed (+ heartbeat, agent.created); dashboard summary events_last_24h=5.
+
+**Security self-review:** no secrets; zero pip deps; key only via env/argv (never committed); no deploy; no API changes.
+
+**Next:** remaining good-first-issue drafts (05–06), or Antonio-blocked items (demo verdict, live BYOK, Phase 2 real-daemon).
+
 ## 2026-09-25 ~12:05 EDT — API sanitize GET /api/events ?limit= (GFI 03) (agent: justin/platform) — COMPLETE
 
 **Task selected:** Good-first-issue draft 03 — `GET /api/events?limit=abc` was `Number('abc')=NaN` → SQLite datatype mismatch → 500. **Chosen behavior: return 400** via existing `ValidationError` (`limit must be a number`); do NOT silently fall back to 50. Negative/zero/fractional/large keep store clamp 1–500.
